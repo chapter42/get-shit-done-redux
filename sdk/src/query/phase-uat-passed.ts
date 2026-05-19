@@ -8,10 +8,13 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { resolvePhaseDir } from './phase-list-queries.js';
+import { extractFrontmatter } from './frontmatter.js';
+import { parseVerificationFrontmatterItems } from './uat.js';
 
 export const REASON_CODE = Object.freeze({
   NON_PASS_RESULT: 'non_pass_result',
   CASE_MISMATCH: 'case_mismatch',
+  HUMAN_VERIFICATION_NEEDED: 'human_verification_needed',
   NO_PHASE_DIR: 'no_phase_dir',
   NO_UAT_FILES: 'no_uat_files',
 } as const);
@@ -126,6 +129,21 @@ export async function isPhaseUatPassed(
           capturedValue: item.result,
         });
       }
+    }
+
+    // Merge frontmatter human_verification items into the roster.
+    const fm = extractFrontmatter(content);
+    const fmItems = parseVerificationFrontmatterItems(fm);
+    for (const fmItem of fmItems) {
+      const name = String(fmItem.name ?? '');
+      // Add a synthetic UatItem so items.length is accurate.
+      items.push({ test: -1, name, expected: String(fmItem.expected ?? ''), result: 'human_needed' });
+      reasons.push({
+        code: REASON_CODE.HUMAN_VERIFICATION_NEEDED,
+        file: relFile,
+        itemName: name,
+        capturedValue: 'human_needed',
+      });
     }
   }
 

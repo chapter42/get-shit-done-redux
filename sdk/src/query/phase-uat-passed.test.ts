@@ -273,6 +273,39 @@ expected: thing
     }
   });
 
+  it("human_verification items in frontmatter contribute HUMAN_VERIFICATION_NEEDED reasons", async () => {
+    const localTmp = await mkdtemp(join(tmpdir(), 'gsd-uat-c11-'));
+    try {
+      const phaseDir = join(localTmp, '.planning', 'phases', '05-human-verification');
+      await mkdir(phaseDir, { recursive: true });
+      const content = `---
+status: complete
+phase: 5
+source: roadmap
+started: 2026-05-18T00:00:00Z
+updated: 2026-05-18T00:00:00Z
+human_verification:
+  - name: manual smoke test
+    expected: app loads
+---
+
+### 1. Real pass
+expected: thing
+result: pass
+`;
+      await writeFile(join(phaseDir, '05-HUMAN-UAT.md'), content);
+
+      const result = await isPhaseUatPassed(localTmp, '5');
+      expect(result.passed).toBe(false);
+      expect(result.items.length).toBe(2);
+      expect(result.reasons.length).toBe(1);
+      expect(result.reasons[0].code).toBe(REASON_CODE.HUMAN_VERIFICATION_NEEDED);
+      expect(result.reasons[0].itemName).toBe('manual smoke test');
+    } finally {
+      await rm(localTmp, { recursive: true, force: true });
+    }
+  });
+
   it("emits CASE_MISMATCH reason when result value is \"PASS\" (uppercase variant of pass)", async () => {
     const localTmp = await mkdtemp(join(tmpdir(), 'gsd-uat-c10-'));
     try {
