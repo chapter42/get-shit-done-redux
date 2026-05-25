@@ -6,7 +6,7 @@ interface RuntimeAliasManifest {
   [canonicalRuntime: string]: string[];
 }
 
-const MANIFEST_PATH = new URL('../shared/runtime-aliases.manifest.json', import.meta.url);
+const MANIFEST_PATH = new URL('../../shared/runtime-aliases.manifest.json', import.meta.url);
 const manifest: RuntimeAliasManifest = JSON.parse(readFileSync(fileURLToPath(MANIFEST_PATH), 'utf-8'));
 
 function normalizeRuntimeToken(value: string): string {
