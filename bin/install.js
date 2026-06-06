@@ -2182,6 +2182,284 @@ function convertClaudeCommandToKimiSkill(content, skillName, _runtime = null, cm
   return `---\nname: ${kimiSkillName}\ndescription: ${yamlQuote(toSingleLine(description))}\n---\nInvoke this Kimi skill with \`/skill:${kimiSkillName}\`.\n\n${normalizedBody}`;
 }
 
+const KIMI_CANONICAL_GSD_AGENT_RE = /^gsd-[a-z0-9-]+$/;
+const kimiAgentContractToolMap = {
+  Agent: 'kimi_cli.tools.agent:Agent',
+  Task: 'kimi_cli.tools.agent:Agent',
+};
+
+function parseKimiAgentSource(source) {
+  if (typeof source === 'string') {
+    return {
+      path: null,
+      content: source,
+    };
+  }
+  if (!source || typeof source !== 'object' || typeof source.content !== 'string') {
+    return null;
+  }
+  return {
+    path: typeof source.path === 'string' ? source.path : null,
+    content: source.content,
+  };
+}
+
+function parseFrontmatterTools(frontmatter) {
+  if (!frontmatter) return [];
+  const lines = frontmatter.split(/\r?\n/);
+  const tools = [];
+  let collecting = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    if (collecting) {
+      if (trimmed.startsWith('- ')) {
+        tools.push(trimmed.slice(2).trim());
+        continue;
+      }
+      collecting = false;
+    }
+
+    if (trimmed === 'tools:' || trimmed === 'allowed-tools:') {
+      collecting = true;
+      continue;
+    }
+
+    if (trimmed.startsWith('tools:') || trimmed.startsWith('allowed-tools:')) {
+      const value = trimmed.slice(trimmed.indexOf(':') + 1).trim();
+      if (value) {
+        for (const tool of value.split(',')) {
+          const name = tool.trim();
+          if (name) tools.push(name);
+        }
+      } else {
+        collecting = true;
+      }
+    }
+  }
+
+  return tools;
+}
+
+function addKimiAgentDiagnostic(diagnostics, code, message, value, source = null) {
+  diagnostics.push({
+    level: 'warning',
+    code,
+    message,
+    value,
+    source,
+  });
+}
+
+function mapKimiAgentContractTools(toolNames, diagnostics, sourceName) {
+  const mapped = [];
+  const seen = new Set();
+
+  for (const rawTool of toolNames) {
+    const tool = String(rawTool || '').trim();
+    if (!tool) continue;
+
+    if (tool.startsWith('mcp__')) {
+      addKimiAgentDiagnostic(
+        diagnostics,
+        'kimi_mcp_tool_excluded',
+        `MCP-managed tool '${tool}' is configured outside Kimi agent YAML.`,
+        tool,
+        sourceName
+      );
+      continue;
+    }
+
+    const kimiTool = kimiAgentContractToolMap[tool];
+    if (!kimiTool) {
+      addKimiAgentDiagnostic(
+        diagnostics,
+        'kimi_unsupported_tool',
+        `Tool '${tool}' is not part of the Phase 3 Kimi agent contract mapper.`,
+        tool,
+        sourceName
+      );
+      continue;
+    }
+
+    if (!seen.has(kimiTool)) {
+      seen.add(kimiTool);
+      mapped.push(kimiTool);
+    }
+  }
+
+  return mapped;
+}
+
+function neutralizeKimiAgentPrompt(content) {
+  const { frontmatter, body } = extractFrontmatterAndBody(content);
+  let prompt = frontmatter ? body : content;
+  prompt = neutralizeAgentReferences(prompt, 'AGENTS.md');
+  prompt = prompt.replace(/~\/\.claude\/gsd-core\b/g, 'GSD core');
+  prompt = prompt.replace(/\$HOME\/\.claude\/gsd-core\b/g, 'GSD core');
+  return prompt.replace(/^\s*\r?\n/, '');
+}
+
+function pushKimiToolsYaml(lines, indent, tools) {
+  const prefix = ' '.repeat(indent);
+  if (!Array.isArray(tools) || tools.length === 0) {
+    lines.push(`${prefix}tools: []`);
+    return;
+  }
+  lines.push(`${prefix}tools:`);
+  for (const tool of tools) {
+    lines.push(`${prefix}  - ${yamlQuote(tool)}`);
+  }
+}
+
+function buildKimiRootAgentYaml({ description, tools, subagents }) {
+  const lines = [
+    'version: 1',
+    'agent:',
+    '  name: gsd',
+    `  description: ${yamlQuote(toSingleLine(description || 'Run GSD workflows in Kimi CLI.'))}`,
+    '  extend: default',
+    '  system_prompt_path: ./gsd.md',
+  ];
+  pushKimiToolsYaml(lines, 2, tools);
+
+  if (subagents.length > 0) {
+    lines.push('  subagents:');
+    for (const subagent of subagents) {
+      lines.push(`    ${subagent.name}:`);
+      lines.push(`      path: ./subagents/${subagent.name}.yaml`);
+      lines.push(`      description: ${yamlQuote(toSingleLine(subagent.description))}`);
+    }
+  }
+
+  return `${lines.join('\n')}\n`;
+}
+
+function buildKimiSubagentYaml({ name, description, tools }) {
+  const lines = [
+    'version: 1',
+    'agent:',
+    `  name: ${name}`,
+    `  description: ${yamlQuote(toSingleLine(description || `Run ${name}.`))}`,
+    `  system_prompt_path: ./${name}.md`,
+  ];
+  pushKimiToolsYaml(lines, 2, tools);
+  return `${lines.join('\n')}\n`;
+}
+
+function buildKimiAgentArtifacts({
+  rootAgent = '',
+  subagents = [],
+  requestedSubagents = null,
+} = {}) {
+  const diagnostics = [];
+  const rootSource = parseKimiAgentSource(rootAgent) || { path: null, content: '' };
+  const { frontmatter: rootFrontmatter } = extractFrontmatterAndBody(rootSource.content);
+  const rootDescription = rootFrontmatter
+    ? extractFrontmatterField(rootFrontmatter, 'description') || 'Run GSD workflows in Kimi CLI.'
+    : 'Run GSD workflows in Kimi CLI.';
+
+  const subagentSources = Array.isArray(subagents) ? subagents : [];
+  if (!Array.isArray(subagents)) {
+    addKimiAgentDiagnostic(
+      diagnostics,
+      'kimi_unsupported_subagents_input',
+      'Subagents input must be an array of Markdown strings or source objects.',
+      typeof subagents,
+      null
+    );
+  }
+
+  const subagentMap = new Map();
+  for (const source of subagentSources) {
+    const parsed = parseKimiAgentSource(source);
+    if (!parsed) {
+      addKimiAgentDiagnostic(
+        diagnostics,
+        'kimi_unsupported_subagent_input',
+        'Subagent source must be a Markdown string or an object with content.',
+        typeof source,
+        null
+      );
+      continue;
+    }
+
+    const { frontmatter } = extractFrontmatterAndBody(parsed.content);
+    const fallbackName = parsed.path ? path.basename(parsed.path, path.extname(parsed.path)) : null;
+    const name = frontmatter
+      ? extractFrontmatterField(frontmatter, 'name') || fallbackName
+      : fallbackName;
+    if (!name || !KIMI_CANONICAL_GSD_AGENT_RE.test(name)) {
+      addKimiAgentDiagnostic(
+        diagnostics,
+        'kimi_invalid_subagent_name',
+        'Subagent source does not use a canonical gsd-* Kimi agent name.',
+        name || '(missing)',
+        parsed.path
+      );
+      continue;
+    }
+
+    const description = frontmatter
+      ? extractFrontmatterField(frontmatter, 'description') || `Run ${name}.`
+      : `Run ${name}.`;
+    const tools = mapKimiAgentContractTools(parseFrontmatterTools(frontmatter), diagnostics, name);
+    subagentMap.set(name, {
+      name,
+      description,
+      tools,
+      prompt: neutralizeKimiAgentPrompt(parsed.content),
+    });
+  }
+
+  const requested = Array.isArray(requestedSubagents) && requestedSubagents.length > 0
+    ? requestedSubagents
+    : [...subagentMap.keys()];
+  const selectedSubagents = [];
+  for (const requestedName of requested) {
+    if (subagentMap.has(requestedName)) {
+      selectedSubagents.push(subagentMap.get(requestedName));
+      continue;
+    }
+    addKimiAgentDiagnostic(
+      diagnostics,
+      'kimi_unknown_subagent',
+      'Requested subagent was not generated and will not be emitted in Kimi YAML.',
+      requestedName,
+      null
+    );
+  }
+
+  const rootTools = mapKimiAgentContractTools(parseFrontmatterTools(rootFrontmatter), diagnostics, 'gsd');
+  if (selectedSubagents.length > 0 && !rootTools.includes('kimi_cli.tools.agent:Agent')) {
+    rootTools.push('kimi_cli.tools.agent:Agent');
+  }
+
+  return {
+    root: {
+      name: 'gsd',
+      yamlPath: 'agents/gsd.yaml',
+      promptPath: 'agents/gsd.md',
+      yaml: buildKimiRootAgentYaml({
+        description: rootDescription,
+        tools: rootTools,
+        subagents: selectedSubagents,
+      }),
+      prompt: neutralizeKimiAgentPrompt(rootSource.content),
+    },
+    subagents: selectedSubagents.map((subagent) => ({
+      name: subagent.name,
+      yamlPath: `agents/subagents/${subagent.name}.yaml`,
+      promptPath: `agents/subagents/${subagent.name}.md`,
+      yaml: buildKimiSubagentYaml(subagent),
+      prompt: subagent.prompt,
+    })),
+    diagnostics,
+  };
+}
+
 /**
  * Convert a Claude agent (.md) to a Copilot agent (.agent.md).
  * Applies tool mapping + deduplication, formats tools as JSON array.
@@ -11041,6 +11319,7 @@ module.exports = {
     uninstall,
     convertClaudeCommandToCodexSkill,
     convertClaudeCommandToKimiSkill,
+    buildKimiAgentArtifacts,
     convertClaudeToOpencodeFrontmatter,
     convertClaudeToKiloFrontmatter,
     configureOpencodePermissions,
