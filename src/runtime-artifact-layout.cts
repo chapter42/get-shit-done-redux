@@ -15,6 +15,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import installProfiles = require('./install-profiles.cjs');
 const {
@@ -222,7 +223,7 @@ function kimiAgentsKind(destSubpath: string, prefix: string, configDir: string):
 
       const rootAgent = `---\nname: gsd\ndescription: Run GSD workflows in Kimi CLI.\ntools: Agent\n---\n\n# GSD for Kimi CLI\n\nCoordinate installed /skill:gsd-* workflows and route work to generated GSD subagents when a workflow requires an agent handoff.\n`;
       const artifacts = buildKimiAgentArtifacts({ rootAgent, subagents });
-      const stageDir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'gsd-kimi-agents-'));
+      const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-kimi-agents-'));
       fs.writeFileSync(path.join(stageDir, 'gsd.yaml'), artifacts.root.yaml);
       fs.writeFileSync(path.join(stageDir, 'gsd.md'), artifacts.root.prompt);
       const subagentsDir = path.join(stageDir, 'subagents');
