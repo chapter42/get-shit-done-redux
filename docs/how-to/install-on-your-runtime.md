@@ -104,6 +104,36 @@ Skills land in `~/.codex/skills/gsd-*/SKILL.md`. Agents are written with per-age
 
 ---
 
+### Kimi CLI
+
+```bash
+npx @opengsd/gsd-core@latest --kimi --global
+```
+
+Skills land in `~/.config/agents/skills/gsd-*/SKILL.md`. Start a new Kimi CLI session after install, then invoke GSD skills with `/skill:gsd-*`, for example:
+
+```text
+/skill:gsd-new-project
+```
+
+The installer also writes the GSD custom agent definition to `~/.config/agents/agents/gsd.yaml` with its prompt at `~/.config/agents/agents/gsd.md`; subagents land under `~/.config/agents/agents/subagents/gsd-*.yaml` and `~/.config/agents/agents/subagents/gsd-*.md`.
+
+Kimi custom agents do not auto-activate just because the files exist. Launch Kimi with the generated agent file when you want the GSD agent surface:
+
+```bash
+kimi --agent-file ~/.config/agents/agents/gsd.yaml
+```
+
+**Override the install directory:**
+
+```bash
+KIMI_CONFIG_DIR=~/.config/agents-alt npx @opengsd/gsd-core@latest --kimi --global
+```
+
+`--kimi --local` is intentionally deferred and guarded in v1; use the global install path above for Kimi CLI.
+
+---
+
 ### GitHub Copilot
 
 ```bash
