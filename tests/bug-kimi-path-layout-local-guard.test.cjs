@@ -334,7 +334,10 @@ describe('Kimi local install guard', () => {
         0,
         `second install failed\nstdout: ${second.stdout}\nstderr: ${second.stderr}`,
       );
-      assert.match(`${second.stdout}\n${second.stderr}`, /locally modified GSD file/i);
+      const secondOutput = `${second.stdout}\n${second.stderr}`;
+      assert.match(secondOutput, /locally modified GSD file/i);
+      assert.match(secondOutput, /\/skill:gsd-update --reapply/);
+      assert.doesNotMatch(secondOutput, /Run\s+\/gsd-update --reapply/);
 
       const skillBackup = path.join(tmpConfig, 'gsd-local-patches', 'skills', 'gsd-new-project', 'SKILL.md');
       const agentBackup = path.join(tmpConfig, 'gsd-local-patches', 'agents', 'subagents', 'gsd-executor.md');

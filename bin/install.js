@@ -9077,6 +9077,8 @@ function reportLocalPatches(configDir, runtime = 'claude') {
           ? '$gsd-update --reapply'
         : runtime === 'cursor'
           ? 'gsd-update --reapply (mention the skill name)'
+        : runtime === 'kimi'
+          ? '/skill:gsd-update --reapply'
           : '/gsd-update --reapply';
     console.log('');
     console.log('  ' + yellow + 'Local patches detected' + reset + ' (from v' + meta.from_version + '):');

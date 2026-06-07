@@ -17,8 +17,8 @@
  *   kimi    — Agent Skills are discovered from Kimi's generic user roots:
  *             ~/.config/agents/skills (recommended) then ~/.agents/skills,
  *             with Kimi selecting the first existing generic skills directory.
- *             ~/.kimi-code/skills is brand-specific and can be selected with
- *             KIMI_CONFIG_DIR.
+ *             ~/.kimi-code/skills is brand-specific and can be selected as a
+ *             GSD write target with --config-dir or KIMI_CONFIG_DIR.
  */
 
 import os from 'node:os';
@@ -79,6 +79,10 @@ export function resolveAntigravityGlobalDir(opts: ResolveAntigravityOpts = {}): 
  * If neither generic skills directory exists yet, install to the recommended
  * ~/.config/agents root so the generated skills become the first generic
  * candidate Kimi discovers.
+ *
+ * KIMI_CONFIG_DIR is a GSD installer write-location override. It is not Kimi's
+ * upstream data-root variable, and arbitrary roots are discoverable by Kimi only
+ * when the user also configures Kimi --skills-dir or extra_skill_dirs.
  */
 export function resolveKimiGlobalDir(opts: ResolveKimiOpts = {}): string {
   const env: Record<string, string | undefined> = opts.env ?? process.env;
