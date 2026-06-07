@@ -289,7 +289,7 @@ Qwen Code supports 15 hook events. GSD registers the following events automatica
 npx @opengsd/gsd-core@latest --augment --global
 ```
 
-Skills land in `~/.augment/`. GSD installs skills and agents. No hook or statusline ownership.
+Skills land in `~/.augment/skills/` and slash command definitions land in `~/.augment/commands/`. GSD installs skills, agents, and commands (`/gsd-phase`, `/gsd-ship`, etc.). No hook or statusline ownership.
 
 ---
 
