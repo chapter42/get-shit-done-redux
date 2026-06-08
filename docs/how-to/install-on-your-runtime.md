@@ -214,6 +214,8 @@ All registered hooks are managed by GSD and are removed cleanly on `--uninstall`
 
 ### Kimi CLI
 
+> **Support boundary — legacy `kimi-cli` vs Kimi Code.** This integration targets the legacy/Python `kimi-cli` custom-agent contract. The `kimi --agent-file <configRoot>/agents/gsd.yaml` launch shown below is accepted by `kimi-cli`. The newer npm Kimi Code (`@moonshot-ai/kimi-code`, e.g. `0.11.0`) does **not** accept `--agent-file`; it discovers skills through fixed skill roots and `--skills-dir`. The generated `/skill:gsd-*` skills work in both, but the custom-agent (`--agent-file`) surface is specific to legacy `kimi-cli`. For Kimi Code, point it at the installed skills root with `--skills-dir <configRoot>/skills` instead of using `--agent-file`.
+
 ```bash
 npx @opengsd/gsd-core@latest --kimi --global
 ```
