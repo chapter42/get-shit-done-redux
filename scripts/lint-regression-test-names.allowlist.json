@@ -215,6 +215,7 @@
   "bug-3784-gsd-settings-model-profile-ui-omits-adaptive.test.cjs",
   "bug-3805-fast-md-log-to-state-schema.test.cjs",
   "bug-3808-codex-adapter-text-mode-fallback.test.cjs",
+  "bug-3810-no-gsd-sdk-runtime-refs.test.cjs",
   "bug-384-agents-runtime-aware.test.cjs",
   "bug-397-state-preserve-executor-authored.test.cjs",
   "bug-410-install-defaults-test-mode-guard.test.cjs",
@@ -242,5 +243,17 @@
   "bug-663-redos-roadmap-phase-parsing.test.cjs",
   "bug-685-windowshide-spawn.test.cjs",
   "bug-687-agy-timeout.test.cjs",
-  "bug-704-codex-launcher-path-corruption.test.cjs"
+  "bug-704-codex-launcher-path-corruption.test.cjs",
+  "bug-730-milestone-phase-details-scope.test.cjs",
+  "bug-782-cline-skills-emission.test.cjs",
+  "bug-783-kilo-global-skills-base.test.cjs",
+  "bug-853-bg-dispatch-runtime-gating.test.cjs",
+  "bug-866-profile-pipeline-temp-root.test.cjs",
+  "bug-891-non-claude-runtime-home-fallback.test.cjs",
+  "bug-892-validate-checklist-roadmap-phases.test.cjs",
+  "bug-905-state-syncstatefrontmatter-preserve-scalars.test.cjs",
+  "bug-924-claude-flat-skill-layout.test.cjs",
+  "bug-925-context-monitor-hook-event-name.test.cjs",
+  "bug-936-no-nested-spawner-wrap.test.cjs",
+  "bug-941-managed-hooks-registry-manifest.test.cjs"
 ]
