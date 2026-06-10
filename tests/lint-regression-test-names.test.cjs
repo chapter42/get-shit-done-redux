@@ -9,17 +9,18 @@ const { describe, test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('child_process');
 const fs = require('fs');
-const os = require('node:os');
 const path = require('path');
-const { cleanup } = require('./helpers.cjs');
+const { createTempDir, cleanup } = require('./helpers.cjs');
 
 const ROOT = path.join(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'lint-regression-test-names.cjs');
 
 let sandbox;
 
+let fixtureCount = 0;
+
 function runLint({ files, allowlist }) {
-  const testsDir = path.join(sandbox, `tests-${Math.random().toString(36).slice(2)}`);
+  const testsDir = path.join(sandbox, `tests-${fixtureCount++}`);
   fs.mkdirSync(testsDir, { recursive: true });
   for (const f of files) fs.writeFileSync(path.join(testsDir, f), '');
   const allowlistPath = path.join(testsDir, 'allowlist.json');
@@ -37,7 +38,7 @@ function runLint({ files, allowlist }) {
 
 describe('lint-regression-test-names', () => {
   before(() => {
-    sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-lint-regression-'));
+    sandbox = createTempDir('gsd-lint-regression-');
   });
 
   after(() => {

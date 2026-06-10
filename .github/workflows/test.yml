@@ -104,9 +104,10 @@ jobs:
       - name: Build runtime lib (required by lint scripts)
         run: npm run build:lib
       # Single orchestrated lint entry point (npm run lint:ci) so local and CI
-      # always run the identical set. ESLint's --cache flag is intentionally
-      # NOT used here: CI never restores node_modules/.cache, so the flag was
-      # a no-op that only implied caching existed.
+      # always run the identical set. It composes `npm run lint`, keeping one
+      # eslint invocation home; the --cache flag inside it is a no-op in CI
+      # (node_modules/.cache is never restored) but still speeds local runs.
+      # Each sub-lint prints its own banner, so a failure identifies itself.
       - name: Lint — all (ESLint, skill deps, test-file count, command contract, PR checks, legacy name, regression-test names)
         run: npm run lint:ci
 
@@ -203,10 +204,11 @@ jobs:
       # the SAME V8 coverage data left in coverage/tmp by the run above — no
       # extra suite execution. Audit 2026-06: scripts/ measured 65.95%; the
       # 55% floor prevents a collapse to zero-coverage tooling while leaving
-      # headroom for variance. Raise deliberately, never lower.
+      # headroom for variance. The threshold lives in package.json next to
+      # the 70% lib gate — raise deliberately, never lower.
       - name: Coverage floor — scripts/ tooling (≥55%)
         if: matrix.scope == 'full'
-        run: npx c8 check-coverage --lines 55 --include 'scripts/**/*.cjs' --exclude 'tests/**' --all
+        run: npm run test:coverage:scripts-floor
 
       - name: Upload coverage artifact
         if: always() && matrix.scope == 'full'
