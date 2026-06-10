@@ -521,7 +521,7 @@ The canonical lint infrastructure adopted in ADR 452 (`docs/adr/452-eslint-lint-
 `DEFECT.SUPERSEDED-CONCURRENT-PRS.fix-forward=close superseded PRs via gh api PATCH state=closed; do not comment on self-authored PRs (k101); the link to the merged PR makes supersession discoverable in PR history`
 
 `DEFECT.PROMPT-INJECTION-SCAN-COLLISION.symptom=custom XML element name in agent .md file matches scripts/scan-prompt-injection regex; legitimate agent vocabulary trips the security gate`
-`DEFECT.PROMPT-INJECTION-SCAN-COLLISION.examples=#3309 added a bare 'human' element (angle-bracket-wrapped) for verify-block harvesting; tests/prompt-injection-scan.test.cjs flags angle-bracket-wrapped names matching system|assistant|human (open or close form)`
+`DEFECT.PROMPT-INJECTION-SCAN-COLLISION.examples=#3309 added a bare 'human' element (angle-bracket-wrapped) for verify-block harvesting; tests/prompt-injection-scan.security.test.cjs flags angle-bracket-wrapped names matching system|assistant|human (open or close form)`
 `DEFECT.PROMPT-INJECTION-SCAN-COLLISION.detect=any new bare <system|assistant|human|user> tag in agents/*.md`
 `DEFECT.PROMPT-INJECTION-SCAN-COLLISION.fix-forward=hyphenate the tag (<human-check>, <assistant-prompt>) — scanner regex matches bare names only`
 
