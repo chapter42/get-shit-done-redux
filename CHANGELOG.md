@@ -6,6 +6,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-06-11
+
+### Changed
+
+- Added an opt-in `anthropic-fable` model policy provider preset for Claude Fable 5 high-budget routing while preserving the existing Anthropic Opus 4.8 defaults and `anthropic` provider preset. (#1014) (#1015)
+
 ## [1.4.3] - 2026-06-09
 
 ### Fixed
