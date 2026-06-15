@@ -78,17 +78,45 @@ describe('prohibition-enforcement: deterministic test-tier producer (#1259 / ADR
     assert.equal(ev.passed, true);
   });
 
-  test('lint-rule (no-source-grep) check that passes -> green', () => {
+  test('lint-rule (no-source-grep) check that passes -> green, evidence carries rule id', () => {
     const enforce = require(ENFORCEMENT_LIB);
     const result = enforce.runProhibitionEnforcement(
       TEST_TIER,
-      { kind: 'lint-rule', target: 'no-source-grep', failFirst: true },
+      { kind: 'lint-rule', rule: 'local/no-source-grep', target: 'tests/', failFirst: true },
       { runCheck: () => ({ failFirst: true, passed: true }) },
     );
     assert.equal(result.status, 'green');
     assert.equal(result.flagged, false);
     assert.equal(result.kind, 'lint-rule');
     assert.equal(result.evidence[0].kind, 'lint-rule');
+    assert.equal(result.evidence[0].rule, 'local/no-source-grep', 'evidence records which rule asserted the must-NOT');
+    assert.equal(result.evidence[0].target, 'tests/', 'evidence records the linted target path, not the rule id');
+  });
+
+  test('buildLintArgs maps the rule id and lint target to DISTINCT eslint args (#1259 runner fix)', () => {
+    const enforce = require(ENFORCEMENT_LIB);
+    assert.equal(typeof enforce.buildLintArgs, 'function',
+      'must export buildLintArgs — the pure argv mapper for the lint-rule real runner');
+    const argv = enforce.buildLintArgs({ kind: 'lint-rule', rule: 'local/no-source-grep', target: 'tests/' });
+    assert.ok(Array.isArray(argv), 'argv is an array');
+    const ruleIdx = argv.indexOf('--rule');
+    assert.ok(ruleIdx !== -1, 'forces a specific rule via --rule');
+    assert.equal(argv[ruleIdx + 1], 'local/no-source-grep: error', 'the rule id is forced to error');
+    assert.equal(argv[argv.length - 1], 'tests/', 'the LAST arg is the lint target path');
+    assert.notEqual(argv[ruleIdx + 1], argv[argv.length - 1],
+      'the rule id must NOT be reused as the lint target (the bug this guards)');
+  });
+
+  test('lint-rule descriptor missing its rule id -> locate-miss, never green', () => {
+    const enforce = require(ENFORCEMENT_LIB);
+    const result = enforce.runProhibitionEnforcement(
+      TEST_TIER,
+      { kind: 'lint-rule', target: 'tests/', failFirst: true }, // no `rule`
+      { runCheck: () => ({ failFirst: true, passed: true }) },
+    );
+    assert.notEqual(result.status, 'green', 'a lint-rule with no rule id is not a valid wired check');
+    assert.equal(result.flagged, true);
+    assert.equal(result.located, false, 'an under-specified lint-rule descriptor is not locatable');
   });
 
   test('check that FAILS -> hard-gate (non-green, flagged), located:true, no evidence', () => {
