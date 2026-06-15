@@ -70,7 +70,15 @@ Aggregate all must_haves across plans for phase-level verification.
 **Prohibitions (`must_haves.prohibitions`, ADR-550 D3 — the must-NOT sibling block):** When a plan carries `must_haves.prohibitions`, extract each `{ statement, status, verification }` item and route it by `verification` tier in verdict assembly (ADR-550 D4, "B-with-guard", 2026-06-12 maintainer decision). These are NEGATIVE checks (the must-NOT must NOT have happened), distinct from positive `truths`:
 
 - **judgment-tier → mode-dependent soft-gate.** Interactive verify defers each item to the end-of-phase human checkpoint (`human_verify_mode: end-of-phase`). Autonomous verify records a NON-AUTHORITATIVE LLM-judge verdict + a prominent `unverified-prohibition — human review recommended` flag (autonomous completion reads "complete with N flagged prohibitions"). NEVER a silent pass; NEVER a hard halt of an AFK run.
-- **test-tier → FAIL CLOSED (accept-and-flag).** Accept the `verification: test` value (the SPEC↔must_haves.prohibitions projection contract holds — no forced schema change later), but a well-formed test-tier item reaching verify with NO wired enforcement disposes as UNVERIFIED, flagged like an unresolved judgment item, NEVER green. The deterministic fail-closed default is `dispositionForProhibition()` in probe-core (`status: 'unverified'`, `flagged: true` on empty `enforcementEvidence`). The real fail-first negative-test enforcement MECHANISM defers to a follow-up PR (#644's corpus is entirely judgment-tier; a contrived test-tier fixture here would be the gold-plating failure mode).
+- **test-tier → ENFORCED via `check prohibition-enforcement` (green on pass, hard-gate on miss/fail).** Accept the `verification: test` value (the SPEC↔must_haves.prohibitions projection contract holds — no forced schema change later). For each test-tier item, the verifier invokes the deterministic producer:
+
+  ```bash
+  gsd_run check prohibition-enforcement <request.json>
+  ```
+
+  where `<request.json>` carries `{ prohibition, check, mode }` — `check` being the wired mechanical-check descriptor `{ kind: 'node-test' | 'lint-rule', target, failFirst: true }`. The producer LOCATES the wired check, CONFIRMS it is fail-first (`regression-must-fail-first`), RUNS it, builds `enforcementEvidence`, and emits the `dispositionForProhibition()` verdict (#1259, ADR-550 D5d). Route the result by its typed fields:
+  - **`status: 'green'`, `flagged: false`** (a passing wired negative test / lint rule, `located: true`, non-empty `evidence`) → the item is satisfiable → it can reach **passed**.
+  - **missing, failing, or non-fail-first check** (`located: false` OR `status: 'unverified'`, `flagged: true`) → **hard-gate**: disposes flagged-unverified, NEVER green, routing to `gaps_found` in BOTH interactive and autonomous modes (a failing mechanical check blocks even AFK; ADR-550 D4 / D3). The deterministic fail-closed default backing every miss/fail is `dispositionForProhibition()` in probe-core (`status: 'unverified'`, `flagged: true` on empty `enforcementEvidence`).
 
 **Option B: Use Success Criteria from ROADMAP.md**
 
@@ -471,7 +479,7 @@ Classify status using this decision tree IN ORDER (most restrictive first):
    → **gaps_found**
 
 2. IF any `must_haves.prohibitions` item disposes as flagged-unverified (ADR-550 D4):
-   - **test-tier, fail-closed** (no wired enforcement — `dispositionForProhibition()` returns `status: 'unverified'`, `flagged: true`): → **gaps_found** (never green; the unwired test-tier item is an unverified gap).
+   - **test-tier, fail-closed when the wired check is MISSING OR FAILS** (now run via `check prohibition-enforcement` — `located: false`, or `dispositionForProhibition()` returns `status: 'unverified'`, `flagged: true`): → **gaps_found** in both interactive and autonomous modes (never green; a missing/failing mechanical check is an unverified gap). A test-tier item whose wired check PASSES disposes `status: 'green'`, `flagged: false` and is NOT a gap — it can reach **passed**.
    - **judgment-tier, autonomous run** (non-authoritative LLM-judge verdict): emit the `unverified-prohibition — human review recommended` flag and classify → **human_needed** (autonomous completion reads "complete with N flagged prohibitions"; never a silent pass, never a hard halt).
    - **judgment-tier, interactive run**: route to the end-of-phase human checkpoint → **human_needed**.
 

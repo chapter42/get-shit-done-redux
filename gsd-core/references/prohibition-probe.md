@@ -110,6 +110,17 @@ lifecycle is identical to the edge-probe, the verification tiers differ):
     human/LLM judgment that the framing is not manipulative). It records intent and routes
     to a judgment-based review rather than a green/red test.
 
+  At verify time these tiers are routed differently (ADR-550 D4):
+  - A **test**-tier prohibition is enforced + hard-gates via the deterministic
+    `check prohibition-enforcement` sub-command (#1259, ADR-550 D5d): it locates the wired
+    mechanical check (a `node --test` negative test OR a lint/AST rule), confirms it is
+    fail-first, runs it, and emits the `dispositionForProhibition()` verdict. A passing wired
+    check disposes **green** (satisfiable → can reach `passed`); a missing, failing, or
+    non-fail-first check **hard-gates** (flagged, never green → `gaps_found`) in BOTH
+    interactive and autonomous modes — never a silent pass.
+  - A **judgment**-tier prohibition routes to a never-silent / never-hard-halt soft gate
+    (autonomous emits an `unverified-prohibition — human review recommended` flag).
+
 Splitting these axes keeps the lifecycle enum free of a verification fact and lets the
 prohibition adapter declare `test | judgment` without forking the shared lifecycle enum that
 the edge-probe's `explicit | backstop` also uses.
