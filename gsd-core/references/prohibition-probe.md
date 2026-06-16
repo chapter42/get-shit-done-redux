@@ -169,15 +169,20 @@ nested object would flatten/mangle the round-trip (ADR-550 2026-06-15 addendum; 
 rewrite" precedent). `projectProhibitions` emits these keys **only for a well-formed descriptor**
 (valid `check_kind` + non-empty `check_target`; `check_rule` only on the lint-rule path), and
 verify-phase reads them back via `descriptorFromProjection` into the `CheckDescriptor` handed to
-`check prohibition-enforcement`. A wired, passing test then closes the gap with **zero manual
-descriptor authoring**.
+`check prohibition-enforcement`. This closes the **locate** half with **zero manual descriptor
+authoring**. Note the projection carries **no `violationFixture`** (`descriptorFromProjection`
+reconstructs only `{ kind, target, rule? }`); because #1279 machine-proves fail-first against a
+fixture, a prohibition wired purely through this projected path **hard-gates (fail-closed)** until a
+`check_violation_fixture` scalar is threaded through — tracked as **#1346**. Until then green needs a
+hand-supplied `violationFixture`.
 
 **Fail-closed + backward-compat.** A partial descriptor (`lint-rule` missing `check_rule`), an
 unknown `check_kind`, or an **absent** descriptor on a test-tier prohibition falls through to the
 producer's existing fail-closed locate — never a silent green. A prohibition with no descriptor
 parses and disposes byte-identically to today. `failFirst` is **not** sourced from the
-descriptor — it stays a verify-time caller attestation (machine-proven fail-first is tracked in
-#1279; the `dispositionForProhibition` policy is unchanged).
+descriptor and is now **demoted** (machine-proven fail-first DELIVERED in #1279 — no path greens on
+attestation alone, FF-08); the `dispositionForProhibition` policy is unchanged. The field that gates
+green and is **not yet projected** is `violationFixture` (follow-up #1346).
 
 ## Output schema
 

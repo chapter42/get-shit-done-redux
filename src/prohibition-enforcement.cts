@@ -539,7 +539,23 @@ function defaultProveFailFirst(check: CheckDescriptor, cwd: string, timeoutMs?: 
     }
     if (check.kind === 'node-test') {
       const fixture = check.violationFixture;
-      if (!fixture) return { provenFailFirst: false }; // no fixture -> hard-gate (NEVER attestation)
+      // Fail-CLOSED on a missing/typo'd/stale fixture path, SYMMETRIC with the lint-rule path's
+      // `eslintFileResultCount >= 1` guard. Without the existence check, a non-existent fixture makes
+      // `GSD_PROHIB_SUBJECT` point at a missing file; an honest negative test reading that subject
+      // throws ENOENT *inside its callback* — a failing test named DISTINCTLY from the file, which
+      // `isNonVacuousNodeTestRed` would accept as proof. That is fail-OPEN: a typo forges a green from
+      // a setup crash, not from the prohibition firing. Requiring the fixture to exist before spawning
+      // closes the realistic typo/stale-path case (#1279 review, Major 1).
+      //
+      // KNOWN RESIDUAL (documented, fail-open direction, tracked follow-up #1346): existence is
+      // necessary but not sufficient — a deliberately deceptive negative test that reds merely BECAUSE
+      // `GSD_PROHIB_SUBJECT` is set (rather than because the subject's CONTENT violates the must-NOT)
+      // is still accepted. Proving "the red was CAUSED BY the violation" cannot be done generically for
+      // an arbitrary author-supplied test, so it is recorded as a constraint, not silently implied-solved.
+      // Resolve the fixture against `cwd` (NOT the verify process's cwd): the spawned test reads
+      // `GSD_PROHIB_SUBJECT` and resolves a relative subject against `cwd`, so the existence check must
+      // use the SAME base or it could pass here yet ENOENT in the child (re-opening the fail-open hole).
+      if (!fixture || !fs.existsSync(path.resolve(cwd, fixture))) return { provenFailFirst: false };
       let out = '';
       try {
         out = execFileSync(process.execPath, buildNodeTestArgs(check), {
@@ -632,7 +648,7 @@ export function runProhibitionEnforcement(
   const passed = proof.provenFailFirst === true && run.passed === true;
 
   if (!passed) {
-    // NOT attested fail-first OR did not genuinely pass -> fail-closed, located: true (an actual
+    // NOT machine-proven fail-first OR did not genuinely pass -> fail-closed, located: true (an actual
     // located miss/fail). Hard-gate applies in BOTH modes; the disposition stays non-green / flagged.
     const disposition = dispositionForProhibition(prohibition, { enforcementEvidence: [] });
     return {

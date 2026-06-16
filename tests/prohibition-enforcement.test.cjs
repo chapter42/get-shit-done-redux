@@ -847,6 +847,63 @@ describe('prohibition-enforcement defaultProveFailFirst REAL prover (#1279)', ()
       'a node-test with no violationFixture cannot be proven -> hard-gate, never attestation');
   });
 
+  test('node-test: an HONEST test + a non-existent violationFixture path is NOT proven (FF-05 fail-OPEN guard, #1314 Major 1)', (t) => {
+    const enforce = require(ENFORCEMENT_LIB);
+    const dir = createTempDir('prohib-ff-node-missingfix-');
+    t.after(() => cleanup(dir));
+    // REGRESSION (#1314 review, Major 1): a REAL, honest negative test (its target file EXISTS and
+    // loads cleanly) reads GSD_PROHIB_SUBJECT and fs.readFileSync's it. Point violationFixture at a
+    // MISSING path (the realistic author typo / stale / moved-fixture case). Before the fix the missing
+    // subject made the honest test throw ENOENT *inside its callback* — a failing test named distinctly
+    // from the file — which isNonVacuousNodeTestRed accepted as a genuine RED, FORGING provenFailFirst:true
+    // from a setup crash (fail-OPEN). The fs.existsSync(fixture) guard now fail-CLOSES this, symmetric
+    // with the lint-rule path. Note this is the SAME honest-test shape as the FF-03 red-direction test —
+    // only the fixture path is missing — so it is exactly the green-able producer minus a valid fixture.
+    const negTest = path.join(dir, 'neg.test.cjs');
+    fs.writeFileSync(negTest,
+      "const { test } = require('node:test');\n" +
+      "const assert = require('node:assert');\n" +
+      "const fs = require('node:fs');\n" +
+      "test('subject must not contain FORBIDDEN', () => {\n" +
+      "  const subject = fs.readFileSync(process.env.GSD_PROHIB_SUBJECT, 'utf-8');\n" +
+      "  assert.ok(!subject.includes('FORBIDDEN'), 'subject is clean');\n" +
+      "});\n");
+    const missingFixture = path.join(dir, 'does-not-exist-subject.txt'); // deliberately NOT written
+    const proof = enforce.defaultProveFailFirst(
+      { kind: 'node-test', target: negTest, violationFixture: missingFixture },
+      dir,
+    );
+    assert.equal(proof.provenFailFirst, false,
+      'a missing/typo\'d violationFixture must NOT forge a green from the honest test\'s ENOENT crash (fail-closed, symmetric with lint-rule)');
+  });
+
+  test('node-test: a RELATIVE violationFixture is resolved against cwd (existence guard matches the child, #1314 Major 1)', (t) => {
+    const enforce = require(ENFORCEMENT_LIB);
+    const dir = createTempDir('prohib-ff-node-relfix-');
+    t.after(() => cleanup(dir));
+    // The fixture is named RELATIVELY; the prover runs with cwd=dir and sets GSD_PROHIB_SUBJECT to the
+    // raw relative name, which the child resolves against its cwd (=dir). The existence guard must use
+    // the SAME base (path.resolve(cwd, fixture)) — a bare existsSync against the verify process's cwd
+    // would not find it and would wrongly hard-gate a valid fixture. Proving TRUE here confirms the
+    // relative path is honored end-to-end and the guard is cwd-correct.
+    const negTest = path.join(dir, 'neg.test.cjs');
+    fs.writeFileSync(negTest,
+      "const { test } = require('node:test');\n" +
+      "const assert = require('node:assert');\n" +
+      "const fs = require('node:fs');\n" +
+      "test('subject must not contain FORBIDDEN', () => {\n" +
+      "  const subject = fs.readFileSync(process.env.GSD_PROHIB_SUBJECT, 'utf-8');\n" +
+      "  assert.ok(!subject.includes('FORBIDDEN'), 'subject is clean');\n" +
+      "});\n");
+    fs.writeFileSync(path.join(dir, 'bad-subject.txt'), 'this subject contains FORBIDDEN content\n');
+    const proof = enforce.defaultProveFailFirst(
+      { kind: 'node-test', target: negTest, violationFixture: 'bad-subject.txt' }, // RELATIVE to cwd
+      dir,
+    );
+    assert.equal(proof.provenFailFirst, true,
+      'a relative violationFixture resolved against cwd is found, runs RED, and proves fail-first');
+  });
+
   test('prover never throws: a non-existent fixture / unresolvable tooling -> provenFailFirst:false (FF-05/FF-06)', () => {
     const enforce = require(ENFORCEMENT_LIB);
     // Non-existent lint fixture path -> eslint lints nothing / errors -> fail-closed, no throw.
