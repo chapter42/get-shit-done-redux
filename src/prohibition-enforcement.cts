@@ -95,10 +95,29 @@ export interface EnforcementEvidence {
   passed: boolean;
 }
 
+/**
+ * The result of machine-proving a check is fail-first (#1279). `provenFailFirst` is true ONLY when
+ * the prover independently ran the check against a KNOWN VIOLATION and observed it go red (lint rule
+ * flags the violation / negative test fails). `method` records HOW it was proven, for evidence
+ * provenance. Any un-provable outcome (no fixture, toothless rule, throw, timeout) → `provenFailFirst:
+ * false` (fail-closed) so attestation can never silently green a toothless check.
+ */
+export interface FailFirstProof {
+  provenFailFirst: boolean;
+  method?: 'violation-fixture';
+}
+
 /** Injectable options for `runProhibitionEnforcement` (defaults wire to the real runner). */
 export interface EnforcementOptions {
   /** Runs the located check; injected in tests so no real subprocess is spawned. */
   runCheck?: (check: CheckDescriptor) => CheckRunResult;
+  /**
+   * Machine-proves the located check is fail-first by running it against the descriptor's
+   * `violationFixture` and confirming it goes red (#1279). Injected in tests so no real subprocess is
+   * spawned; defaults to the real `defaultProveFailFirst`. Mirrors the `runCheck` seam. Plan 03 wires
+   * the result into the green decision; this plan only constructs the prover.
+   */
+  proveFailFirst?: (check: CheckDescriptor) => FailFirstProof;
   /** Verify mode — recorded for transparency; the hard-gate applies in BOTH modes (ADR-550 D4). */
   mode?: string;
   /** Project root for the default real runner (defaults to process.cwd()). */
@@ -378,6 +397,86 @@ function defaultRunCheck(check: CheckDescriptor, cwd: string, timeoutMs?: number
     return { passed: false };
   }
 }
+
+/**
+ * The default REAL fail-first prover (#1279; used when no `proveFailFirst` is injected). It runs the
+ * wired check against the descriptor's `violationFixture` (a KNOWN-BAD subject) and requires it to go
+ * RED — the machine proof that replaces caller attestation. Like `defaultRunCheck`, it is the
+ * impure/injectable seam (spawns eslint / `node --test`), reuses the identical bounded-subprocess
+ * machinery (`childEnv`/`posTimeout`/`CHECK_MAX_BUFFER`, `execFileSync(process.execPath, …)`, arg
+ * arrays → no shell), and NEVER throws — every un-provable path returns `{ provenFailFirst: false }`.
+ *
+ *   - lint-rule: lint the `violationFixture` via the project flat config (so `local/*` plugins load)
+ *     and require the target to actually lint (>=1 file result) AND no fatal/parse error AND the rule
+ *     id to appear in the report (messages OR suppressedMessages — an inline-disabled violation still
+ *     proves the rule has teeth, #1259 B1). Absent fixture / unresolvable eslint → not proven.
+ *   - node-test: spawn the negative test (TAP) with `GSD_PROHIB_SUBJECT` set to the `violationFixture`
+ *     — the CONVENTION (#1279) by which a negative test reads its subject-under-test — and require the
+ *     run to go RED (`isNodeTestRed`: `# fail >= 1`). A toothless test that passes anyway → not proven.
+ *     Absent fixture → not proven (fail-closed; NEVER falls back to attestation).
+ */
+function defaultProveFailFirst(check: CheckDescriptor, cwd: string, timeoutMs?: number): FailFirstProof {
+  try {
+    if (check.kind === 'lint-rule') {
+      const fixture = check.violationFixture;
+      if (!fixture) return { provenFailFirst: false }; // can't prove without a known violation -> hard-gate
+      const eslintCli = resolveEslintCli(cwd);
+      if (!eslintCli) return { provenFailFirst: false }; // eslint not installed -> fail closed, never throw
+      let json = '';
+      try {
+        json = execFileSync(process.execPath, [eslintCli, ...buildLintArgs({ ...check, target: fixture })], {
+          cwd,
+          encoding: 'utf-8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          windowsHide: true,
+          env: childEnv(),
+          timeout: posTimeout(timeoutMs, ESLINT_TIMEOUT_MS),
+          maxBuffer: CHECK_MAX_BUFFER,
+        });
+      } catch (e) {
+        // eslint exits non-zero on any error; the JSON report is still on stdout. A timeout/kill
+        // leaves no parseable JSON -> eslintHasFatalError(unparseable) -> not proven (fail-closed).
+        const stdout = e && typeof e === 'object' && 'stdout' in e ? (e as { stdout?: unknown }).stdout : '';
+        json = typeof stdout === 'string' ? stdout : '';
+      }
+      // Proven iff: the fixture actually linted (>=1 file result), the rule RAN (no fatal/parse
+      // error), and the rule id appears (the violation was flagged -> the rule has teeth).
+      const proven = eslintFileResultCount(json) >= 1
+        && !eslintHasFatalError(json)
+        && eslintJsonHasRule(json, check.rule as string);
+      return { provenFailFirst: proven, method: 'violation-fixture' };
+    }
+    if (check.kind === 'node-test') {
+      const fixture = check.violationFixture;
+      if (!fixture) return { provenFailFirst: false }; // no fixture -> hard-gate (NEVER attestation)
+      let out = '';
+      try {
+        out = execFileSync(process.execPath, buildNodeTestArgs(check), {
+          cwd,
+          encoding: 'utf-8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          windowsHide: true,
+          // CONVENTION (#1279): the negative test reads its subject-under-test from this env var.
+          env: { ...childEnv(), GSD_PROHIB_SUBJECT: fixture },
+          timeout: posTimeout(timeoutMs, NODE_TEST_TIMEOUT_MS),
+          maxBuffer: CHECK_MAX_BUFFER,
+        });
+      } catch (e) {
+        // A negative test that goes RED exits non-zero; the partial TAP (with the `# fail` summary)
+        // is on stdout. Parse what we have: a real failure here is the PROOF the test is fail-first.
+        const stdout = e && typeof e === 'object' && 'stdout' in e ? (e as { stdout?: unknown }).stdout : '';
+        out = typeof stdout === 'string' ? stdout : '';
+      }
+      return { provenFailFirst: isNodeTestRed(out), method: 'violation-fixture' };
+    }
+    // Unknown kind — defensive; the LOCATE guard already rejects it.
+    return { provenFailFirst: false };
+  } catch {
+    return { provenFailFirst: false };
+  }
+}
+
+export { defaultProveFailFirst };
 
 /**
  * LOCATE -> CONFIRM fail-first -> RUN -> build enforcementEvidence -> dispositionForProhibition.
