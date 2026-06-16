@@ -536,7 +536,7 @@ describe('prohibition-enforcement REAL runner end-to-end (#1259)', () => {
   test('a clean in-tree target greens the lint-rule kind via the real eslint + real prover (SF-01: plugin loads)', () => {
     const enforce = require(ENFORCEMENT_LIB);
     // Migrated to the SHIPPING prover (#1279): the default real prover lints the committed
-    // `_ff_lint_violation.test.cjs` violationFixture (the rule fires -> fail-first proven) while the
+    // `_ff_lint_violation.cjs` violationFixture (the rule fires -> fail-first proven) while the
     // clean runCheck lints src/clock.cts (no violation -> non-vacuous pass). Both via real eslint.
     const result = enforce.runProhibitionEnforcement(
       TEST_TIER,
@@ -545,7 +545,7 @@ describe('prohibition-enforcement REAL runner end-to-end (#1259)', () => {
         rule: 'local/no-source-grep',
         target: 'src/clock.cts',
         failFirst: true,
-        violationFixture: path.join('tests', '_ff_lint_violation.test.cjs'),
+        violationFixture: path.join('tests', '_ff_lint_violation.cjs'),
       },
       { cwd: process.cwd() },
     );
@@ -579,7 +579,7 @@ describe('prohibition-enforcement REAL runner end-to-end (#1259)', () => {
   test('FULL producer (real prover + real runner): lint-rule greens on a real no-source-grep violation fixture + clean target (FF-02/FF-10)', () => {
     const enforce = require(ENFORCEMENT_LIB);
     // No injected runCheck/proveFailFirst: the default prover lints the committed
-    // `_ff_lint_violation.test.cjs` (the rule fires -> fail-first proven) AND the default runner lints
+    // `_ff_lint_violation.cjs` (the rule fires -> fail-first proven) AND the default runner lints
     // the clean `src/clock.cts` (no violation -> non-vacuous pass). BOTH directions via real eslint.
     const result = enforce.runProhibitionEnforcement(
       TEST_TIER,
@@ -587,7 +587,7 @@ describe('prohibition-enforcement REAL runner end-to-end (#1259)', () => {
         kind: 'lint-rule',
         rule: 'local/no-source-grep',
         target: 'src/clock.cts',
-        violationFixture: path.join('tests', '_ff_lint_violation.test.cjs'),
+        violationFixture: path.join('tests', '_ff_lint_violation.cjs'),
       },
       { cwd: process.cwd() },
     );
@@ -707,12 +707,12 @@ describe('prohibition-enforcement REAL runner end-to-end (#1259)', () => {
 // ─── #1279 defaultProveFailFirst REAL prover end-to-end (FF-02 / FF-03 / FF-05 / FF-06 / FF-07) ──
 // Exercises the SHIPPING default prover against REAL subprocesses (eslint + node --test) — the gap
 // that let #1259's BL-01/SF-01 slip past injected doubles. The lint-rule path dogfoods the committed
-// `tests/_ff_lint_violation.test.cjs` fixture; the node-test path uses synthetic temp fixtures that
+// `tests/_ff_lint_violation.cjs` fixture; the node-test path uses synthetic temp fixtures that
 // demonstrate the `GSD_PROHIB_SUBJECT` subject-injection convention. Typed-result assertions only.
 describe('prohibition-enforcement defaultProveFailFirst REAL prover (#1279)', () => {
   const fs = require('node:fs');
   // The committed load-bearing lint fixture (a real, suppressed no-source-grep violation).
-  const LINT_FIXTURE = 'tests/_ff_lint_violation.test.cjs';
+  const LINT_FIXTURE = 'tests/_ff_lint_violation.cjs';
 
   test('exports the prover surface (defaultProveFailFirst + FailFirstProof-shaped result)', () => {
     const enforce = require(ENFORCEMENT_LIB);
