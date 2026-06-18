@@ -18,6 +18,7 @@ const {
   convertClaudeToOpencodeFrontmatter,
   convertClaudeToKiloFrontmatter,
   convertClaudeToGeminiAgent,
+  convertGeminiToolName,
   convertClaudeAgentToAntigravityAgent,
   convertClaudeCommandToOpencodeSkill,
   convertClaudeCommandToKiloSkill,
@@ -301,13 +302,15 @@ Offer choices via AskUserQuestion when user input is needed.
     // validation (tools.N: Invalid tool name) and aborts the entire agent load —
     // previously killing 22 of 34 GSD agents on Gemini.
 
-    // Direct unit assertion against the canonical converter (criterion 1).
+    // Direct unit assertion against the LIVE install path (bin/install.js copy —
+    // the one that actually generates agents), not the tsc build artifact, so a
+    // stale build can't give a false-green while the live copy is broken.
     test('convertGeminiToolName returns null for Skill and SlashCommand', () => {
-      const { convertGeminiToolName } = require('../gsd-core/bin/lib/runtime-artifact-conversion.cjs');
       assert.equal(convertGeminiToolName('Skill'), null, 'Skill is excluded, not lowercased to "skill"');
       assert.equal(convertGeminiToolName('SlashCommand'), null, 'SlashCommand is excluded, not lowercased to "slashcommand"');
-      // Existing AskUserQuestion exclusion must still hold.
+      // Existing AskUserQuestion/ask_user exclusion (the same if-block this PR extends) must still hold.
       assert.equal(convertGeminiToolName('AskUserQuestion'), null, 'AskUserQuestion remains excluded');
+      assert.equal(convertGeminiToolName('ask_user'), null, 'ask_user remains excluded');
       // Sanity: a mapped tool still converts.
       assert.equal(convertGeminiToolName('Read'), 'read_file', 'mapped tools still convert');
     });
