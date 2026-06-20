@@ -311,7 +311,9 @@ function applySurface(runtimeConfigDir: string, layout: Layout, manifest: Map<st
   for (const kind of layout.kinds) {
     const staged = kind.stage(resolved);
     if (kind.kind === 'skills') {
-      const installExports = getInstallExports();
+      // Pass the config dir so install.js resolution can honor the
+      // <configDir>/.gsd-source marker in deployed installs (#1477).
+      const installExports = getInstallExports(layout.configDir);
       if (pathPrefix === null) {
         const scope = layout.scope ?? 'global';
         const resolvedTarget = path.resolve(layout.configDir).replace(/\\/g, '/');

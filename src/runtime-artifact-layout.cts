@@ -45,16 +45,41 @@ interface InstallExports {
 }
 
 /**
+ * Resolve the absolute path to bin/install.js for the current layout (#1477).
+ *
+ * The relative specifier '../../../bin/install.js' only resolves in the repo
+ * (where this module lives at gsd-core/bin/lib/). In a deployed install the
+ * module sits at <configDir>/gsd-core/bin/lib/ and that specifier points at
+ * <configDir>/bin/install.js, which is never shipped — so the surface write
+ * subcommands threw MODULE_NOT_FOUND. Instead, derive install.js from the
+ * resolved commands/gsd source root: its parent package root holds both
+ * commands/gsd and bin/install.js. findInstallSourceRoot honors the
+ * <configDir>/.gsd-source marker (deployed) and walks up to the repo root
+ * (repo/tests), so this single derivation is correct in both layouts. Falls
+ * back to the legacy relative path if no source root can be resolved.
+ */
+function resolveInstallJsPath(runtimeConfigDir?: string): string {
+  try {
+    const commandsGsd = findInstallSourceRoot(runtimeConfigDir);
+    // <packageRoot>/commands/gsd -> <packageRoot>/bin/install.js
+    const candidate = path.resolve(commandsGsd, '..', '..', 'bin', 'install.js');
+    if (fs.existsSync(candidate)) return candidate;
+  } catch { /* fall through to the legacy module-relative path */ }
+  return path.join(__dirname, '..', '..', '..', 'bin', 'install.js');
+}
+
+/**
  * Load bin/install.js exports in a test-safe way.
  * Sets GSD_TEST_MODE only for the duration of the require() call and only if
  * it was not already set, restoring the original value in a finally block so
  * the module-level environment is never permanently mutated.
  */
-function loadInstallExports(): InstallExports {
+function loadInstallExports(runtimeConfigDir?: string): InstallExports {
+  const installPath = resolveInstallJsPath(runtimeConfigDir);
   const savedTestMode = process.env['GSD_TEST_MODE'];
   if (savedTestMode === undefined) process.env['GSD_TEST_MODE'] = '1';
   try {
-    return _require('../../../bin/install.js') as InstallExports;
+    return _require(installPath) as InstallExports;
   } finally {
     if (savedTestMode === undefined) delete process.env['GSD_TEST_MODE'];
     else process.env['GSD_TEST_MODE'] = savedTestMode;
@@ -63,8 +88,8 @@ function loadInstallExports(): InstallExports {
 
 /** Cache after first successful load. */
 let _installExports: InstallExports | null = null;
-function getInstallExports(): InstallExports {
-  if (!_installExports) _installExports = loadInstallExports();
+function getInstallExports(runtimeConfigDir?: string): InstallExports {
+  if (!_installExports) _installExports = loadInstallExports(runtimeConfigDir);
   return _installExports;
 }
 
