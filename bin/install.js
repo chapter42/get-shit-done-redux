@@ -10035,13 +10035,19 @@ function install(isGlobal, runtime = 'claude', options = {}) {
   // the writer half of the marker that runtime-artifact-layout.cjs's finders
   // already read (the reader landed in #1476). It points at the package's own
   // commands/gsd source, whose parent also holds bin/install.js — the path
-  // loadInstallExports derives the installer exports from. Guarded on source
-  // presence so a half-published package never writes a dangling marker.
-  const gsdSourceCommands = path.join(src, 'commands', 'gsd');
-  if (fs.existsSync(gsdSourceCommands)) {
-    try {
-      fs.writeFileSync(path.join(targetDir, '.gsd-source'), gsdSourceCommands + '\n', 'utf8');
-    } catch (_) { /* non-fatal: surface degrades to walk-up resolution */ }
+  // loadInstallExports derives the installer exports from. Scoped to the
+  // Claude-global layout (issue #1477) — the only install path that ships the
+  // skills layout without a commands/gsd source tree; every other runtime/scope
+  // deploys commands/gsd, so its walk-up already resolves and needs no marker.
+  // Guarded on source presence so a half-published package never writes a
+  // dangling marker.
+  if (runtime === 'claude' && isGlobal) {
+    const gsdSourceCommands = path.join(src, 'commands', 'gsd');
+    if (fs.existsSync(gsdSourceCommands)) {
+      try {
+        fs.writeFileSync(path.join(targetDir, '.gsd-source'), gsdSourceCommands + '\n', 'utf8');
+      } catch (_) { /* non-fatal: surface degrades to walk-up resolution */ }
+    }
   }
 
   // Copy shared manifests into the gsd-core payload
