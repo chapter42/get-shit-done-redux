@@ -17,14 +17,17 @@
  *   runtime-artifact-layout-install-profiles.test.cjs — install-profiles seam
  */
 
-const { test, describe } = require('node:test');
+const { test, describe, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
-const { resolveRuntimeArtifactLayout } = require('../gsd-core/bin/lib/runtime-artifact-layout.cjs');
+const { resolveRuntimeArtifactLayout, findInstallSourceRoot } = require('../gsd-core/bin/lib/runtime-artifact-layout.cjs');
 const installProfiles = require('../gsd-core/bin/lib/install-profiles.cjs');
-const { cleanup } = require('./helpers.cjs');
+const { install } = require('../bin/install.js');
+const { createTempDir, cleanup } = require('./helpers.cjs');
+
+const REPO_ROOT = path.join(__dirname, '..');
 
 const FAKE_DIR = '/tmp/fake-config-dir';
 
@@ -619,5 +622,188 @@ describe('stage — cursor commands kind (#785)', () => {
       assert.ok(entry.isFile(), `${entry.name}: cursor commands dir must contain only flat files`);
       assert.ok(entry.name.endsWith('.md'), `${entry.name}: must be .md file`);
     }
+  });
+});
+
+// ─── #1477: .gsd-source marker provisioning + deployed install-exports ─────────
+//
+// Regression for #1477: the Claude Code global skills layout ships
+// gsd-core/{bin,contexts,references,templates,workflows} but no commands/gsd
+// source tree, and _runLegacyUninstallCleanup removes any commands/gsd/ for that
+// scope. At runtime findInstallSourceRoot's walk-up from gsd-core/bin/lib had
+// nothing to find and /gsd-surface threw for every subcommand (list/status
+// included); the marker reader added in #1476 never fired because nothing wrote
+// the marker. loadInstallExports' relative '../../../bin/install.js' also only
+// resolved in the repo — in a deployed tree it pointed at <configDir>/bin/
+// install.js, which is never shipped, so the surface write subcommands threw
+// MODULE_NOT_FOUND.
+//
+// Fix (both halves): bin/install.js writes <configDir>/.gsd-source pointing at a
+// resolvable commands/gsd whose package root also holds bin/install.js, and
+// runtime-artifact-layout derives bin/install.js from that resolved source root.
+
+describe('#1477 .gsd-source marker provisioning + deployed install-exports resolution', () => {
+  let tmpRoot;
+  let savedHome;
+  let savedUserProfile;
+  let savedExplicitConfigDir;
+  let savedTestMode;
+
+  function silenceConsole(fn) {
+    const orig = { log: console.log, warn: console.warn, error: console.error };
+    console.log = () => {};
+    console.warn = () => {};
+    console.error = () => {};
+    try {
+      return fn();
+    } finally {
+      console.log = orig.log;
+      console.warn = orig.warn;
+      console.error = orig.error;
+    }
+  }
+
+  // Guard against process.exit killing the runner mid-install.
+  function runInstall(isGlobal, runtime) {
+    const origExit = process.exit;
+    let exitCalled = false;
+    process.exit = (code) => {
+      exitCalled = true;
+      throw new Error(`process.exit(${code}) during install — should not happen`);
+    };
+    try {
+      return silenceConsole(() => install(isGlobal, runtime));
+    } catch (e) {
+      if (exitCalled) assert.fail(`install() called process.exit — unexpected: ${e.message}`);
+      throw e;
+    } finally {
+      process.exit = origExit;
+    }
+  }
+
+  beforeEach(() => {
+    tmpRoot = createTempDir('gsd-1477-');
+    savedHome = process.env.HOME;
+    // os.homedir() reads USERPROFILE on win32, HOME elsewhere; redirect both so
+    // install() targets the fixture regardless of platform.
+    savedUserProfile = process.env.USERPROFILE;
+    process.env.HOME = tmpRoot;
+    process.env.USERPROFILE = tmpRoot;
+    savedExplicitConfigDir = process.env.GSD_EXPLICIT_CONFIG_DIR;
+    delete process.env.GSD_EXPLICIT_CONFIG_DIR;
+    savedTestMode = process.env.GSD_TEST_MODE;
+    process.env.GSD_TEST_MODE = '1';
+  });
+
+  afterEach(() => {
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
+    if (savedUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = savedUserProfile;
+    if (savedExplicitConfigDir === undefined) delete process.env.GSD_EXPLICIT_CONFIG_DIR;
+    else process.env.GSD_EXPLICIT_CONFIG_DIR = savedExplicitConfigDir;
+    if (savedTestMode === undefined) delete process.env.GSD_TEST_MODE;
+    else process.env.GSD_TEST_MODE = savedTestMode;
+    cleanup(tmpRoot);
+  });
+
+  // ── Failure 1: the installer provisions a valid marker ──────────────────────
+  test('global claude install writes a .gsd-source marker pointing at a real commands/gsd', () => {
+    const claudeDir = path.join(tmpRoot, '.claude');
+    fs.mkdirSync(claudeDir, { recursive: true });
+
+    runInstall(true /* isGlobal */, 'claude');
+
+    const markerPath = path.join(claudeDir, '.gsd-source');
+    assert.ok(fs.existsSync(markerPath), `.gsd-source marker must be written at ${markerPath}`);
+
+    const markerSrc = fs.readFileSync(markerPath, 'utf8').trim();
+    assert.ok(path.isAbsolute(markerSrc), `marker must contain an absolute path, got: ${markerSrc}`);
+    assert.ok(fs.existsSync(markerSrc), `marker target must exist on disk: ${markerSrc}`);
+    assert.equal(path.basename(markerSrc), 'gsd', 'marker must point at a commands/gsd directory');
+    assert.equal(path.basename(path.dirname(markerSrc)), 'commands');
+
+    // The package root that holds commands/gsd must also hold bin/install.js —
+    // this is what loadInstallExports derives the installer exports from.
+    const derivedInstallJs = path.resolve(markerSrc, '..', '..', 'bin', 'install.js');
+    assert.ok(
+      fs.existsSync(derivedInstallJs),
+      `bin/install.js must be reachable from the marker's package root: ${derivedInstallJs}`,
+    );
+  });
+
+  // ── Failures 1+2 end-to-end: resolution succeeds FROM the deployed tree ──────
+  // The deployed module's __dirname is <claudeDir>/gsd-core/bin/lib, which has no
+  // commands/gsd ancestor (global skills layout). Only the marker rescues it.
+  test('deployed global layout resolves source root + install-exports via the marker', () => {
+    const claudeDir = path.join(tmpRoot, '.claude');
+    fs.mkdirSync(claudeDir, { recursive: true });
+    runInstall(true /* isGlobal */, 'claude');
+
+    // Sanity: the global layout genuinely ships no commands/gsd source tree.
+    assert.ok(
+      !fs.existsSync(path.join(claudeDir, 'commands', 'gsd')),
+      'precondition: global claude install must not ship commands/gsd',
+    );
+
+    const deployedLayoutPath = path.join(claudeDir, 'gsd-core', 'bin', 'lib', 'runtime-artifact-layout.cjs');
+    assert.ok(fs.existsSync(deployedLayoutPath), 'deployed runtime-artifact-layout.cjs must exist');
+    delete require.cache[deployedLayoutPath];
+    const deployed = require(deployedLayoutPath);
+
+    // Negative proof that the bug condition exists: WITHOUT consulting the marker
+    // (no configDir argument), walk-up from the deployed tree has nothing to find.
+    assert.throws(
+      () => deployed.findInstallSourceRoot(),
+      /could not locate commands\/gsd/,
+      'deployed walk-up must fail without the marker — this is the regression condition',
+    );
+
+    // With the marker (configDir provided), list/status resolution succeeds.
+    let resolved;
+    assert.doesNotThrow(() => {
+      resolved = deployed.findInstallSourceRoot(claudeDir);
+    }, 'findInstallSourceRoot must resolve via the .gsd-source marker');
+    assert.equal(path.basename(resolved), 'gsd');
+    assert.ok(fs.existsSync(resolved));
+
+    // The write-subcommand path: install-exports must load in the deployed layout.
+    const exportsObj = deployed.getInstallExports(claudeDir);
+    assert.equal(typeof exportsObj.computePathPrefix, 'function',
+      'getInstallExports must expose computePathPrefix (used by applySurface)');
+    assert.equal(typeof exportsObj.applyRuntimeContentRewritesInPlace, 'function',
+      'getInstallExports must expose applyRuntimeContentRewritesInPlace (used by applySurface)');
+  });
+
+  // ── Adversarial marker-reader cases (no full install needed) ─────────────────
+  describe('findInstallSourceRoot marker handling', () => {
+    let cfgDir;
+    beforeEach(() => { cfgDir = createTempDir('gsd-1477-marker-'); });
+    afterEach(() => { cleanup(cfgDir); });
+
+    test('marker pointing at a valid commands/gsd takes precedence over walk-up', () => {
+      const fakeSrc = path.join(cfgDir, 'pkg', 'commands', 'gsd');
+      fs.mkdirSync(fakeSrc, { recursive: true });
+      fs.writeFileSync(path.join(cfgDir, '.gsd-source'), fakeSrc + '\n', 'utf8');
+
+      const resolved = findInstallSourceRoot(cfgDir);
+      assert.equal(path.resolve(resolved), path.resolve(fakeSrc),
+        'marker target must win over the repo walk-up');
+    });
+
+    test('marker pointing at a non-existent path is ignored (falls through to walk-up)', () => {
+      const ghost = path.join(cfgDir, 'does', 'not', 'exist', 'commands', 'gsd');
+      fs.writeFileSync(path.join(cfgDir, '.gsd-source'), ghost + '\n', 'utf8');
+
+      const resolved = findInstallSourceRoot(cfgDir);
+      assert.notEqual(path.resolve(resolved), path.resolve(ghost));
+      assert.equal(path.resolve(resolved), path.resolve(REPO_ROOT, 'commands', 'gsd'));
+    });
+
+    test('empty / whitespace-only marker is ignored', () => {
+      fs.writeFileSync(path.join(cfgDir, '.gsd-source'), '   \n', 'utf8');
+      const resolved = findInstallSourceRoot(cfgDir);
+      assert.equal(path.resolve(resolved), path.resolve(REPO_ROOT, 'commands', 'gsd'));
+    });
   });
 });
