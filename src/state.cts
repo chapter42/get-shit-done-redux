@@ -177,6 +177,24 @@ function _realIsPidAlive(pid: number): boolean {
 
 const _stateLockProbes: { isPidAlive: (pid: number) => boolean } = { isPidAlive: _realIsPidAlive };
 
+// ---------------------------------------------------------------------------
+// State-lock test hooks (test seam) — audit M8
+//
+// M8 (scan-before-lock TOCTOU in writeStateMd) is a concurrency issue a single-
+// threaded test cannot otherwise observe. The afterAcquire hook makes the
+// failure window deterministic (mirrors the M1 _setLockProbes seam above):
+//
+//   afterAcquire(lockPath)  — fired inside writeStateMd immediately AFTER the lock
+//     is acquired. A test can mutate the disk here (simulate a concurrent writer
+//     landing in the scan→lock window) to prove the disk scan runs INSIDE the lock.
+//
+// All hooks default to no-ops; real callers are byte-for-behaviour unchanged.
+// ---------------------------------------------------------------------------
+interface StateLockTestHooks {
+  afterAcquire?: (lockPath: string) => void;
+}
+const _stateLockTestHooks: StateLockTestHooks = {};
+
 function _stateLockIsPidAlive(pid: number): boolean {
   return _stateLockProbes.isPidAlive(pid);
 }
@@ -1749,13 +1767,24 @@ function withStateLock<T>(statePath: string, fn: () => T): T {
  *   Optional clock seam; defaults to realClock. Passed through to acquireStateLock.
  */
 function writeStateMd(statePath: string, content: string, cwd?: string, clock?: StateLockClock): void {
-  // Invalidate disk scan cache before computing new frontmatter — the write
-  // may create new PLAN/SUMMARY files that buildStateFrontmatter must see.
-  // Safe for any calling pattern, not just short-lived CLI processes (#1967).
-  if (cwd) _diskScanCache.delete(cwd);
-  const synced = syncStateFrontmatter(content, cwd);
   const lockPath = acquireStateLock(statePath, clock);
+  // Test seam (audit M8): fire AFTER the lock is taken so a test can simulate a
+  // concurrent writer landing in the (now-closed) scan→lock window.
+  if (_stateLockTestHooks.afterAcquire) _stateLockTestHooks.afterAcquire(lockPath);
   try {
+    // Audit M8 (leaky-abstractions): the disk scan that counts PLAN/SUMMARY files
+    // to build the frontmatter is the READ half of this read-modify-write — it must
+    // run INSIDE the lock (mirroring readModifyWriteStateMd), not before it. Scanning
+    // before acquireStateLock left a TOCTOU window where a concurrent writer that
+    // committed a new PLAN/SUMMARY between our scan and our lock made writeStateMd
+    // stamp STALE progress counts (lost update — the #500/#905/#1230 family). The
+    // scan order is otherwise byte-for-behaviour identical for single-threaded
+    // callers — only the concurrent-writer window closes.
+    //
+    // Invalidate the disk scan cache first — the write may create new PLAN/SUMMARY
+    // files that buildStateFrontmatter must see (#1967).
+    if (cwd) _diskScanCache.delete(cwd);
+    const synced = syncStateFrontmatter(content, cwd);
     platformWriteSync(statePath, synced);
   } finally {
     releaseStateLock(lockPath);
@@ -2958,5 +2987,13 @@ export = {
   },
   _resetLockProbes(): void {
     _stateLockProbes.isPidAlive = _realIsPidAlive;
+  },
+  // Test seam (audit M8): inject the deterministic scan-in-lock hook (afterAcquire).
+  // See _stateLockTestHooks.
+  _setStateLockTestHooks(hooks: StateLockTestHooks): void {
+    if ('afterAcquire' in hooks) _stateLockTestHooks.afterAcquire = hooks.afterAcquire;
+  },
+  _resetStateLockTestHooks(): void {
+    delete _stateLockTestHooks.afterAcquire;
   },
 };
