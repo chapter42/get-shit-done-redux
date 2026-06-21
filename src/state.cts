@@ -178,22 +178,45 @@ function _realIsPidAlive(pid: number): boolean {
 const _stateLockProbes: { isPidAlive: (pid: number) => boolean } = { isPidAlive: _realIsPidAlive };
 
 // ---------------------------------------------------------------------------
-// State-lock test hooks (test seam) — audit M8
+// State-lock test hooks (test seam) — audit M8 / M9
 //
-// M8 (scan-before-lock TOCTOU in writeStateMd) is a concurrency issue a single-
-// threaded test cannot otherwise observe. The afterAcquire hook makes the
-// failure window deterministic (mirrors the M1 _setLockProbes seam above):
+// Both M8 (scan-before-lock TOCTOU in writeStateMd) and M9 (orphan empty lock +
+// fd leak on a recoverable writeSync/closeSync error in acquireStateLock) are
+// concurrency / resource-safety issues a single-threaded test cannot otherwise
+// observe. These purpose-built hooks make the failure windows deterministic
+// (mirrors the M1 _setLockProbes seam above):
 //
 //   afterAcquire(lockPath)  — fired inside writeStateMd immediately AFTER the lock
 //     is acquired. A test can mutate the disk here (simulate a concurrent writer
 //     landing in the scan→lock window) to prove the disk scan runs INSIDE the lock.
+//   simulateWriteError      — a ONE-SHOT errno string. When set, the next writeSync
+//     inside acquireStateLock throws it (and the hook self-clears), forcing the
+//     openSync-succeeds-then-write-fails cleanup path without an OS-level fault.
+//   onLoopIteration(ctx)    — fired at the TOP of each acquireStateLock retry
+//     iteration so a test can snapshot whether an orphan lock is stranded.
 //
 // All hooks default to no-ops; real callers are byte-for-behaviour unchanged.
 // ---------------------------------------------------------------------------
 interface StateLockTestHooks {
   afterAcquire?: (lockPath: string) => void;
+  simulateWriteError?: string | null;
+  onLoopIteration?: (ctx: { iteration: number }) => void;
 }
 const _stateLockTestHooks: StateLockTestHooks = {};
+
+/**
+ * Consume the one-shot simulateWriteError errno, if set. Returns an Error with the
+ * configured `.code` and self-clears so only the NEXT writeSync throws (the retry
+ * then succeeds). Returns null when no injection is pending.
+ */
+function _consumeSimulatedWriteError(): NodeJS.ErrnoException | null {
+  const code = _stateLockTestHooks.simulateWriteError;
+  if (!code) return null;
+  _stateLockTestHooks.simulateWriteError = null; // one-shot
+  const e = new Error('simulated writeSync failure (' + code + ')') as NodeJS.ErrnoException;
+  e.code = code;
+  return e;
+}
 
 function _stateLockIsPidAlive(pid: number): boolean {
   return _stateLockProbes.isPidAlive(pid);
@@ -1679,11 +1702,33 @@ function acquireStateLock(statePath: string, clock?: StateLockClock): string {
     clock.sleep(retryDelay + jitter);
   };
 
+  let _loopIteration = 0;
   while (true) {
+    if (_stateLockTestHooks.onLoopIteration) _stateLockTestHooks.onLoopIteration({ iteration: _loopIteration++ });
     try {
       const fd = fs.openSync(lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
-      fs.writeSync(fd, String(process.pid));
-      fs.closeSync(fd);
+      // Audit M9 (resource-safety): once the exclusive create SUCCEEDS, a
+      // writeSync/closeSync failure must NOT leak the fd or strand the just-created
+      // (now empty) lock — an orphan body self-blocks every later acquirer until a
+      // liveness steal or the deadman. On any write/close error, guardedly close the
+      // fd and unlink the file we created, then re-throw to the existing outer catch
+      // (which keeps classifying recoverable vs fatal errnos — DRY). A FATAL errno
+      // still propagates after cleanup; a RECOVERABLE one retries from a clean slate.
+      // Mirrors capability-lock.cts:415-425.
+      try {
+        const injected = _consumeSimulatedWriteError();
+        if (injected) throw injected; // test seam: one-shot writeSync failure (M9)
+        fs.writeSync(fd, String(process.pid));
+        fs.closeSync(fd);
+      } catch (writeErr) {
+        try { fs.closeSync(fd); } catch { /* best-effort — fd may already be closed */ }
+        // Best-effort unlink of the lock WE just created. Guarded so we never throw
+        // here; if another acquirer already stole the empty lock the unlink is a
+        // harmless ENOENT no-op (we do not double-unlink someone else's lock — the
+        // open(O_EXCL) above guarantees we created this path this iteration).
+        try { fs.unlinkSync(lockPath); } catch { /* best-effort — no orphan */ }
+        throw writeErr; // re-throw to the outer catch for recoverable/fatal classification
+      }
       // Exit-time cleanup keeps a crashed locked region from leaving a stale file (#1916).
       _heldStateLocks.add(lockPath);
       return lockPath;
@@ -2988,12 +3033,17 @@ export = {
   _resetLockProbes(): void {
     _stateLockProbes.isPidAlive = _realIsPidAlive;
   },
-  // Test seam (audit M8): inject the deterministic scan-in-lock hook (afterAcquire).
-  // See _stateLockTestHooks.
+  // Test seam (audit M8/M9): inject deterministic hooks for the scan-in-lock window
+  // (afterAcquire), the one-shot recoverable writeSync failure (simulateWriteError),
+  // and per-iteration orphan-lock snapshots (onLoopIteration). See _stateLockTestHooks.
   _setStateLockTestHooks(hooks: StateLockTestHooks): void {
     if ('afterAcquire' in hooks) _stateLockTestHooks.afterAcquire = hooks.afterAcquire;
+    if ('simulateWriteError' in hooks) _stateLockTestHooks.simulateWriteError = hooks.simulateWriteError;
+    if ('onLoopIteration' in hooks) _stateLockTestHooks.onLoopIteration = hooks.onLoopIteration;
   },
   _resetStateLockTestHooks(): void {
     delete _stateLockTestHooks.afterAcquire;
+    delete _stateLockTestHooks.simulateWriteError;
+    delete _stateLockTestHooks.onLoopIteration;
   },
 };
