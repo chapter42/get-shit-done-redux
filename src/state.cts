@@ -194,6 +194,10 @@ const _stateLockProbes: { isPidAlive: (pid: number) => boolean } = { isPidAlive:
 //     openSync-succeeds-then-write-fails cleanup path without an OS-level fault.
 //   onLoopIteration(ctx)    — fired at the TOP of each acquireStateLock retry
 //     iteration so a test can snapshot whether an orphan lock is stranded.
+//   beforeSteal(ctx)        — fired AFTER the steal decision but BEFORE the identity
+//     re-confirm + atomic rename-steal. A test can recreate a fresh lock here to
+//     simulate a racer winning the steal in the decision→steal gap, proving the
+//     identity re-confirm aborts a double-steal (PR #1532 review window b).
 //
 // All hooks default to no-ops; real callers are byte-for-behaviour unchanged.
 // ---------------------------------------------------------------------------
@@ -201,6 +205,7 @@ interface StateLockTestHooks {
   afterAcquire?: (lockPath: string) => void;
   simulateWriteError?: string | null;
   onLoopIteration?: (ctx: { iteration: number }) => void;
+  beforeSteal?: (ctx: { lockPath: string }) => void;
 }
 const _stateLockTestHooks: StateLockTestHooks = {};
 
@@ -230,16 +235,32 @@ function _stateLockIsPidAlive(pid: number): boolean {
  * locks never block forever, and a live holder is never stolen.
  */
 function _stateHolderVerifiedLive(lockPath: string): boolean {
+  const pid = _stateLockBodyPid(lockPath);
+  return pid !== null && _stateLockIsPidAlive(pid);
+}
+
+/**
+ * Parse the lock body to its recorded pid, or null when the body is empty / non-numeric
+ * / unreadable (legacy or mid-creation). Distinguishing a COMPLETE dead-pid body (steal
+ * promptly) from an EMPTY/unparseable one (the create→write window — do not steal while
+ * fresh) is what `_stateHolderVerifiedLive` alone cannot express, so the steal decision
+ * in acquireStateLock reads the pid directly (PR #1532 review, window a).
+ */
+function _stateLockBodyPid(lockPath: string): number | null {
   let body: string;
   try {
     body = fs.readFileSync(lockPath, 'utf-8');
   } catch {
-    return false; // unreadable body → cannot verify → not verified-live (stealable under ceiling)
+    return null; // unreadable body → cannot verify
   }
-  const pid = parseInt(body.trim(), 10);
-  if (!Number.isInteger(pid) || pid <= 0 || String(pid) !== body.trim()) return false;
-  return _stateLockIsPidAlive(pid);
+  const trimmed = body.trim();
+  const pid = parseInt(trimmed, 10);
+  if (!Number.isInteger(pid) || pid <= 0 || String(pid) !== trimmed) return null;
+  return pid;
 }
+
+// Monotonic sequence for unique stale-steal rename targets (no crypto dependency).
+let _stateStealSeq = 0;
 
 // Hoisted to module scope — compiled once, not per call (#320). Stateless (/i, used with .match).
 const byPhaseTablePattern = /(\|\s*Phase\s*\|\s*Plans\s*\|\s*Total\s*\|\s*Avg\/Plan\s*\|[ \t]*\n\|(?:[- :\t]+\|)+[ \t]*\n)((?:[ \t]*\|[^\n]*\n)*)(?=\n|$)/i;
@@ -1684,6 +1705,15 @@ function acquireStateLock(statePath: string, clock?: StateLockClock): string {
   // than blocking forever. The prior mtime-only `staleThresholdMs = 10000` gate
   // was BELOW maxWaitMs, so a live-but-slow holder >10 s was robbed mid-write.
   const deadmanCeilingMs = 60000;
+  // Fresh-create floor (PR #1532 review, window a) — a lock with an EMPTY/unparseable
+  // body is either mid-creation (O_EXCL create done, pid not yet written by the holder)
+  // or a genuine orphan. While such a body is younger than this floor it is treated as
+  // mid-creation and is NEVER stolen — stealing it at age ≈ 0 robs a holder still
+  // writing its pid (the lost-update window capability-lock.cts's `age <= LOCK_STALE_MS`
+  // floor closes). The create→write gap is sub-millisecond; this floor is orders of
+  // magnitude larger yet well under maxWaitMs so a real orphan still clears within budget.
+  // A COMPLETE dead-pid body is NOT subject to this floor — it is stolen promptly.
+  const freshCreateFloorMs = 1000;
   const startedAt = clock.now();
 
   // Shared helper: check the time budget then back off with jitter before the
@@ -1742,37 +1772,80 @@ function acquireStateLock(statePath: string, clock?: StateLockClock): string {
         continue;
       }
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err; // propagate — silent bypass causes lost updates
-      // Liveness-gated steal (audit M1). Only unlink a lock we did not place when
-      // either (a) its recorded holder is NOT verified-live — a crashed/dead pid or
-      // a garbage/legacy body — so it is stolen PROMPTLY regardless of age, or
-      // (b) its age has crossed the absolute deadman ceiling (set above maxWaitMs)
-      // — the pid-reuse backstop. A VERIFIED-LIVE holder under the ceiling is NEVER
-      // stolen, even if older than the old mtime-only threshold: nuking a slow-but-
-      // live writer's lock causes lost updates (#3711 / #500/#905/#1230 family).
+      // Liveness-gated steal (audit M1) + steal-safety (PR #1532 review). The steal
+      // decision is three-way on the lock body:
+      //   - VERIFIED-LIVE holder (parseable pid that signals alive): NEVER stolen until
+      //     its age crosses the absolute deadman ceiling (the pid-reuse backstop) —
+      //     nuking a slow-but-live writer's lock causes lost updates (#3711 / #500/#905/
+      //     #1230 family).
+      //   - COMPLETE DEAD pid (parseable pid, not alive): stolen PROMPTLY regardless of
+      //     age — a crashed holder left a full body.
+      //   - EMPTY / unparseable body: liveness is unknowable. While FRESH (age <=
+      //     freshCreateFloorMs) it is a lock still mid-creation (O_EXCL done, pid not yet
+      //     written) and is NOT stolen (window a); only once aged past the floor is it a
+      //     genuine orphan and stealable.
+      // The steal itself is an ATOMIC rename-then-recreate (only one racer can rename the
+      // inode) guarded by an identity re-confirm, so a racer that recreates a fresh lock
+      // in the decision→steal gap never has its replacement deleted (window b). Mirrors
+      // capability-lock.cts:455-499.
       try {
         const stat = fs.statSync(lockPath);
         const ageMs = clock.now() - stat.mtimeMs;
-        const holderLive = _stateHolderVerifiedLive(lockPath);
-        if (!holderLive || ageMs > deadmanCeilingMs) {
-          let removed = false;
-          try { fs.unlinkSync(lockPath); removed = true; } catch { /* swallow: bounded below */ }
-          if (removed) {
-            // Successful steal — retry immediately to grab the just-freed lock.
-            // Must NOT call checkBudgetAndSleep here: a throw-after-delete would
-            // corrupt the filesystem state, and the budget is already bounded on
-            // the next iteration's EEXIST or open attempt (#1217 regression fix).
+        const bodyPid = _stateLockBodyPid(lockPath);
+        const holderLive = bodyPid !== null && _stateLockIsPidAlive(bodyPid);
+        let steal: boolean;
+        if (holderLive) {
+          steal = ageMs > deadmanCeilingMs;   // pid-reuse backstop only
+        } else if (bodyPid !== null) {
+          steal = true;                       // complete dead pid → prompt steal
+        } else {
+          steal = ageMs > freshCreateFloorMs; // empty/garbage → protect the create window
+        }
+        if (steal) {
+          if (_stateLockTestHooks.beforeSteal) _stateLockTestHooks.beforeSteal({ lockPath });
+          // Identity re-confirm immediately before the steal: a racer that stole +
+          // recreated a fresh lock in the decision→steal gap changes (dev, ino) and/or
+          // the body pid → do NOT delete the replacement; re-evaluate from scratch.
+          let confirmStat: fs.Stats;
+          try {
+            confirmStat = fs.statSync(lockPath);
+          } catch {
+            continue; // lock vanished between decision and steal — retry the create.
+          }
+          const sameInstance =
+            typeof stat.dev === 'number' && typeof stat.ino === 'number' &&
+            confirmStat.dev === stat.dev && confirmStat.ino === stat.ino &&
+            _stateLockBodyPid(lockPath) === bodyPid;
+          if (!sameInstance) {
+            // The lock changed under us (a racer won the steal + recreated). Back off
+            // and re-evaluate rather than deleting the racer's fresh replacement.
+            checkBudgetAndSleep('lock changed before steal');
             continue;
           }
-          // Persistent unlinkSync failure — apply budget + backoff so it cannot
-          // busy-spin (#1217).
-          checkBudgetAndSleep('stale lock removal failed');
+          // Atomic steal: rename the inode aside, then remove it. Only ONE racer can
+          // win the rename; a failed rename means another process already stole it, so
+          // we must NOT fall through to a delete — back off and retry the create.
+          const stolen = lockPath + '.stale-' + process.pid + '-' + clock.now() + '-' + (_stateStealSeq++);
+          let renamed = false;
+          try { fs.renameSync(lockPath, stolen); renamed = true; } catch { /* another racer won */ }
+          if (renamed) {
+            try { fs.rmSync(stolen, { force: true }); } catch { /* best-effort */ }
+            // Successful steal — retry immediately to grab the just-freed lock.
+            // Must NOT call checkBudgetAndSleep here: a throw-after-rename would
+            // corrupt filesystem state, and the budget is already bounded on the next
+            // iteration's EEXIST or open attempt (#1217 regression fix).
+            continue;
+          }
+          // Lost the steal race (or a transient rename failure) — apply budget + backoff
+          // so it cannot busy-spin (#1217).
+          checkBudgetAndSleep('stale lock steal lost to racer');
           continue;
         }
       } catch (err) {
-        // Re-throw a budget-exceeded error from the unlinkSync failure path above
-        // unchanged — its message already names the real cause ("stale lock removal
-        // failed") and double-wrapping it would replace that with the misleading
-        // "statSync failed after EEXIST" context string (#1217 diagnostic fix).
+        // Re-throw a budget-exceeded error from the steal path above unchanged — its
+        // message already names the real cause ("lock changed before steal" / "stale
+        // lock steal lost to racer") and double-wrapping it would replace that with the
+        // misleading "statSync failed after EEXIST" context string (#1217 diagnostic fix).
         if ((err as Record<string, unknown>)?.lockBudgetExceeded) throw err;
         // statSync failed — lock was likely released between our EEXIST and this
         // stat call.  Apply budget + backoff so a persistent statSync failure
@@ -3040,10 +3113,12 @@ export = {
     if ('afterAcquire' in hooks) _stateLockTestHooks.afterAcquire = hooks.afterAcquire;
     if ('simulateWriteError' in hooks) _stateLockTestHooks.simulateWriteError = hooks.simulateWriteError;
     if ('onLoopIteration' in hooks) _stateLockTestHooks.onLoopIteration = hooks.onLoopIteration;
+    if ('beforeSteal' in hooks) _stateLockTestHooks.beforeSteal = hooks.beforeSteal;
   },
   _resetStateLockTestHooks(): void {
     delete _stateLockTestHooks.afterAcquire;
     delete _stateLockTestHooks.simulateWriteError;
     delete _stateLockTestHooks.onLoopIteration;
+    delete _stateLockTestHooks.beforeSteal;
   },
 };

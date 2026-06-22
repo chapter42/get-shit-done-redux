@@ -216,8 +216,56 @@ describe('withPlanningLock PID-liveness staleness + EEXIST safety (audit M1+M2)'
 
   afterEach(() => {
     planningWorkspaceDirect._resetLockProbes();
+    if (typeof planningWorkspaceDirect._resetPlanningLockTestHooks === 'function') {
+      planningWorkspaceDirect._resetPlanningLockTestHooks();
+    }
     try { fs.unlinkSync(lockPath); } catch { /* ok */ }
     cleanup(tmpDir);
+  });
+
+  test('a dead holder recreated by a racer mid-steal is NOT double-stolen (identity re-confirm — PR #1532)', () => {
+    const deadPid = 4040;
+    const livePid = 5050;
+    // Decision-time holder: a DEAD pid → eligible for steal inside the polite loop.
+    fs.writeFileSync(lockPath, JSON.stringify({
+      pid: deadPid,
+      cwd: tmpDir,
+      acquired: new Date().toISOString(),
+    }));
+
+    planningWorkspaceDirect._setLockProbes({ isPidAlive: (pid) => pid === livePid });
+
+    // Inject a concurrent waiter that, in the gap between our steal-DECISION and our
+    // steal, already stole + recreated a FRESH lock owned by a LIVE pid. A correct
+    // (identity-re-confirming) acquirer must notice the instance changed and must NOT
+    // delete the racer's live replacement.
+    let injected = false;
+    planningWorkspaceDirect._setPlanningLockTestHooks({
+      beforeSteal: () => {
+        if (injected) return;
+        injected = true;
+        try { fs.unlinkSync(lockPath); } catch { /* ok */ }
+        fs.writeFileSync(lockPath, JSON.stringify({
+          pid: livePid,
+          cwd: tmpDir,
+          acquired: new Date().toISOString(),
+        }));
+      },
+    });
+
+    let ranCriticalSection = false;
+    const clock = makeFakeClock(0);
+    // The racer's replacement is held by a LIVE pid → the acquirer must wait on it and
+    // budget out, NOT delete it and run the critical section (which a double-steal does).
+    assert.throws(
+      () => withPlanningLock(tmpDir, () => { ranCriticalSection = true; return 'x'; }, clock),
+      (err) => err && err.lockTimeout === true,
+      'acquirer must not double-steal the racer\'s live replacement — it must wait + time out'
+    );
+    assert.strictEqual(ranCriticalSection, false, 'critical section must NOT run — the live replacement was not stolen');
+    assert.ok(fs.existsSync(lockPath), 'the racer\'s live replacement lock must survive');
+    const body = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
+    assert.strictEqual(body.pid, livePid, 'the racer\'s freshly-recreated live lock body must be intact (never deleted by a stale-decision unlink)');
   });
 
   test('exports _setLockProbes / _resetLockProbes seams', () => {

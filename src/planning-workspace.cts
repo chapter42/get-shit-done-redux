@@ -65,6 +65,18 @@ function _planningLockIsPidAlive(pid: number): boolean {
   return _planningLockProbes.isPidAlive(pid);
 }
 
+// Test seam (PR #1532 review): beforeSteal fires AFTER the steal decision but BEFORE
+// the identity re-confirm + atomic rename-steal, so a test can recreate a fresh lock
+// in the decision→steal gap and prove the identity re-confirm aborts a double-steal.
+// Defaults to a no-op; real callers are byte-for-behaviour unchanged.
+interface PlanningLockTestHooks {
+  beforeSteal?: (ctx: { lockPath: string }) => void;
+}
+const _planningLockTestHooks: PlanningLockTestHooks = {};
+
+// Monotonic sequence for unique stale-steal rename targets (no crypto dependency).
+let _planningStealSeq = 0;
+
 /**
  * Is the holder recorded in the .lock body VERIFIED-LIVE? The body is JSON
  * { pid, cwd, acquired }. Returns true ONLY when the body parses AND the recorded
@@ -217,18 +229,60 @@ function withPlanningLock<T>(cwd: string, fn: () => T, clock?: Clock): T {
         // recorded holder is NOT verified-live (crashed/dead pid or garbage body).
         // A verified-live holder is waited on — never force-stolen — because nuking
         // a slow-but-live writer's lock corrupts the .planning/ critical section.
+        // The steal is an ATOMIC rename-then-recreate guarded by an identity re-confirm
+        // so a racer that recreates a fresh lock in the decision→steal gap never has
+        // its replacement deleted (audit M2 / PR #1532 review, window b). The body is
+        // written atomically (writeFileSync …{flag:'wx'}) so there is no empty-body
+        // create window here — only the double-steal needs hardening.
         try {
+          const decisionStat = fs.statSync(lockPath);
+          // Snapshot the decision-time body too: (dev, ino) alone is defeated by inode
+          // REUSE (a racer's unlink+recreate can land on the same inode), so the body
+          // content binds the identity as well — mirrors capability-lock.cts's (dev,
+          // ino, ts) re-confirm.
+          let decisionBody: string | null;
+          try { decisionBody = fs.readFileSync(lockPath, 'utf-8'); } catch { decisionBody = null; }
           let stealable = !_planningHolderVerifiedLive(lockPath);
           if (!stealable) {
             // Verified-live, but recover anyway once the lock crosses the absolute
             // deadman ceiling — defeats a pid-reuse false-alive that would otherwise
             // block forever (R4-FIX; mtime age is from lock creation, not this call).
-            const age = clock.now() - fs.statSync(lockPath).mtimeMs;
+            const age = clock.now() - decisionStat.mtimeMs;
             stealable = age > deadmanCeilingMs;
           }
           if (stealable) {
-            fs.unlinkSync(lockPath);
-            continue; // dead/garbage/expired holder — retry immediately to grab the freed lock
+            if (_planningLockTestHooks.beforeSteal) _planningLockTestHooks.beforeSteal({ lockPath });
+            // Identity re-confirm immediately before the steal: a racer that stole +
+            // recreated a fresh lock in the decision→steal gap changes (dev, ino) → do
+            // NOT delete the replacement; back off and re-evaluate.
+            let confirmStat: fs.Stats;
+            try {
+              confirmStat = fs.statSync(lockPath);
+            } catch {
+              continue; // vanished between decision and steal — retry the create.
+            }
+            let confirmBody: string | null;
+            try { confirmBody = fs.readFileSync(lockPath, 'utf-8'); } catch { confirmBody = null; }
+            const sameInstance =
+              typeof decisionStat.dev === 'number' && typeof decisionStat.ino === 'number' &&
+              confirmStat.dev === decisionStat.dev && confirmStat.ino === decisionStat.ino &&
+              decisionBody !== null && confirmBody === decisionBody;
+            if (!sameInstance) {
+              clock.sleep(100); // a racer won the steal + recreated — re-evaluate, don't delete it.
+              continue;
+            }
+            // Atomic steal: rename the inode aside, then remove it. Only ONE racer can
+            // win the rename; a failed rename means another process already stole it, so
+            // we must NOT fall through to a delete — back off and retry the create.
+            const stolen = lockPath + '.stale-' + process.pid + '-' + clock.now() + '-' + (_planningStealSeq++);
+            let renamed = false;
+            try { fs.renameSync(lockPath, stolen); renamed = true; } catch { /* another racer won */ }
+            if (renamed) {
+              try { fs.rmSync(stolen, { force: true }); } catch { /* best-effort */ }
+              continue; // dead/garbage/expired holder freed — retry immediately to grab it.
+            }
+            clock.sleep(100); // lost the steal race — back off and retry.
+            continue;
           }
         } catch { continue; }
 
@@ -347,5 +401,12 @@ export = {
   },
   _resetLockProbes(): void {
     _planningLockProbes.isPidAlive = _realIsPidAlive;
+  },
+  // Test seam (PR #1532 review): script the steal decision→steal gap (window b).
+  _setPlanningLockTestHooks(hooks: PlanningLockTestHooks): void {
+    if ('beforeSteal' in hooks) _planningLockTestHooks.beforeSteal = hooks.beforeSteal;
+  },
+  _resetPlanningLockTestHooks(): void {
+    delete _planningLockTestHooks.beforeSteal;
   },
 };

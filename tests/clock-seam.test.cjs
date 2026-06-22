@@ -224,6 +224,122 @@ describe('acquireStateLock PID-liveness staleness (audit M1)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 1c. Steal-safety windows (PR #1532 review — trek-e)
+//
+// The PID-liveness backport (audit M1) dropped two pieces of capability-lock.cts's
+// race-free steal machinery, reopening the #500/#905/#1230 lost-update family:
+//
+//   (a) Empty-body create window — acquireStateLock creates the lock with O_EXCL and
+//       writes the pid in a SEPARATE writeSync. A lock observed in that window has an
+//       EMPTY body → _stateHolderVerifiedLive('') is false → the no-floor steal gate
+//       robs it at age ≈ 0, mid-creation. capability-lock never steals a FRESH lock
+//       (age <= LOCK_STALE_MS) regardless of body, which is what protects that window.
+//
+//   (b) Double-steal — the steal is a bare fs.unlinkSync with no identity re-confirm
+//       between the decision and the unlink. A racer that steals + recreates a fresh
+//       lock in that gap has its replacement deleted by the first stealer's unlink →
+//       two concurrent holders. capability-lock re-confirms (dev,ino) immediately
+//       before an ATOMIC rename-steal so only one racer can win.
+//
+// Both are driven deterministically through the lock seams (clock + pid probe +
+// onLoopIteration + beforeSteal) — no wall-clock, no real concurrency.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('acquireStateLock steal-safety windows (PR #1532)', () => {
+  let tmpDir;
+  let statePath;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-stealsafety-state-'));
+    fs.mkdirSync(path.join(tmpDir, '.planning'), { recursive: true });
+    statePath = path.join(tmpDir, '.planning', 'STATE.md');
+    fs.writeFileSync(statePath, '# State\n');
+  });
+
+  afterEach(() => {
+    stateMod._resetLockProbes();
+    stateMod._resetStateLockTestHooks();
+    try { fs.unlinkSync(statePath + '.lock'); } catch { /* ok */ }
+    cleanup(tmpDir);
+  });
+
+  test('a FRESH empty-body lock (mid-creation) is NOT stolen at age ~0 — acquirer backs off', () => {
+    const lockPath = statePath + '.lock';
+    // Simulate the create→pid-write window of a CONCURRENT acquirer: the lockfile
+    // exists (O_EXCL create succeeded) but the pid has not been written yet → empty body.
+    fs.writeFileSync(lockPath, '');
+    const freshTime = new Date();
+    fs.utimesSync(lockPath, freshTime, freshTime); // mtime ≈ now → age ≈ 0 (fresh)
+
+    // The body is empty, so liveness cannot be determined from it — the probe value is
+    // irrelevant. The (buggy) no-floor gate steals it regardless; the fix must wait.
+    stateMod._setLockProbes({ isPidAlive: () => false });
+
+    // After the first encounter, clear the empty lock so the (correctly-waiting) acquirer
+    // can complete instead of budgeting out — keeps the test bounded and the assertion
+    // about the FIRST decision, not the eventual outcome.
+    stateMod._setStateLockTestHooks({
+      onLoopIteration: ({ iteration }) => {
+        if (iteration >= 1) { try { fs.unlinkSync(lockPath); } catch { /* already gone */ } }
+      },
+    });
+
+    const clock = makeFakeClock(freshTime.getTime());
+    const acquired = acquireStateLock(statePath, clock);
+
+    assert.ok(fs.existsSync(acquired), 'lock must eventually be acquired');
+    assert.ok(
+      clock.sleepCalls.length >= 1,
+      'a fresh empty-body lock is mid-creation and must NOT be stolen at age ~0 — ' +
+      'the acquirer must back off (sleep) at least once, not unlink + steal immediately'
+    );
+    releaseStateLock(acquired);
+  });
+
+  test('a dead holder whose lock is recreated by a racer mid-steal is NOT double-stolen (identity re-confirm)', () => {
+    const lockPath = statePath + '.lock';
+    const deadPid = 4040;
+    const livePid = 5050;
+    // Decision-time holder: a DEAD pid → eligible for steal.
+    fs.writeFileSync(lockPath, String(deadPid));
+    const t = new Date();
+    fs.utimesSync(lockPath, t, t);
+
+    stateMod._setLockProbes({ isPidAlive: (pid) => pid === livePid });
+
+    // Inject a concurrent waiter that, in the gap between our steal-DECISION and our
+    // steal, already stole + recreated a FRESH lock owned by a LIVE pid. A correct
+    // (identity-re-confirming) acquirer must notice the lock instance changed and must
+    // NOT delete the racer's live replacement.
+    let injected = false;
+    stateMod._setStateLockTestHooks({
+      beforeSteal: () => {
+        if (injected) return;
+        injected = true;
+        try { fs.unlinkSync(lockPath); } catch { /* ok */ }
+        fs.writeFileSync(lockPath, String(livePid)); // different identity + live holder
+        const f = new Date();
+        fs.utimesSync(lockPath, f, f);
+      },
+    });
+
+    const clock = makeFakeClock(t.getTime());
+    // The racer's replacement is held by a LIVE pid → the acquirer must wait on it and
+    // budget out rather than stealing it. (A double-steal would instead delete it and
+    // succeed.)
+    assert.throws(
+      () => acquireStateLock(statePath, clock),
+      (err) => err && err.lockBudgetExceeded === true,
+      'acquirer must not double-steal the racer\'s live replacement — it must wait + budget out'
+    );
+    assert.strictEqual(
+      fs.readFileSync(lockPath, 'utf-8'), String(livePid),
+      'the racer\'s freshly-recreated live lock must survive — never deleted by a stale-decision unlink'
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 1b. Regression #1217 — acquireStateLock ENOENT (recoverable errno) busy-spin
 //
 // Prior to the fix the recoverable-errno branch (`continue`) never called
@@ -477,11 +593,12 @@ describe('acquireStateLock boundary coverage — recoverable-errno budget (#1217
 // before continuing, so they throw within maxWaitMs.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('acquireStateLock statSync/unlinkSync spin paths bounded (#1217)', () => {
+describe('acquireStateLock statSync/steal spin paths bounded (#1217)', () => {
   let tmpDir;
   let statePath;
   let origStatSync;
   let origUnlinkSync;
+  let origRenameSync;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-clock-spin-'));
@@ -490,11 +607,17 @@ describe('acquireStateLock statSync/unlinkSync spin paths bounded (#1217)', () =
     fs.writeFileSync(statePath, '# State\n');
     origStatSync = fs.statSync;
     origUnlinkSync = fs.unlinkSync;
+    origRenameSync = fs.renameSync;
+    // Force the recorded holder (pid 99999) DEAD so the steal path is exercised
+    // deterministically — these tests probe the steal's bounded-backoff, not liveness.
+    stateMod._setLockProbes({ isPidAlive: () => false });
   });
 
   afterEach(() => {
     fs.statSync = origStatSync;
     fs.unlinkSync = origUnlinkSync;
+    fs.renameSync = origRenameSync;
+    stateMod._resetLockProbes();
     try { fs.unlinkSync(statePath + '.lock'); } catch { /* ok */ }
     cleanup(tmpDir);
   });
@@ -534,29 +657,26 @@ describe('acquireStateLock statSync/unlinkSync spin paths bounded (#1217)', () =
     try { origUnlinkSync(lockPath); } catch { /* ok */ }
   });
 
-  test('persistent unlinkSync failure in stale-lock path throws budget-exceeded (not busy-spin)', () => {
-    // Set up an EEXIST condition with a STALE lock (mtime well in the past)
+  test('persistent renameSync failure in steal path throws budget-exceeded (not busy-spin)', () => {
+    // Set up an EEXIST condition with a steal-eligible DEAD holder (pid 99999 — not us,
+    // not alive). The steal is an ATOMIC rename (PR #1532); a persistent rename failure
+    // (e.g. EPERM — file locked by an AV scanner) must back off + budget out, not spin.
     const lockPath = statePath + '.lock';
     fs.writeFileSync(lockPath, '99999');
-    // Back-date mtime by 15 000 ms so the stale-threshold (10 000 ms) is exceeded
-    const staleMs = 15000;
-    const staledTime = new Date(Date.now() - staleMs);
-    fs.utimesSync(lockPath, staledTime, staledTime);
 
-    // Make unlinkSync always fail (e.g. EPERM — file locked by AV scanner)
-    const unlinkErr = Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
-    fs.unlinkSync = (p) => {
-      if (p === lockPath) throw unlinkErr;
-      return origUnlinkSync(p);
+    // Make renameSync always fail for the steal of our lock path.
+    const renameErr = Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+    fs.renameSync = (from, to) => {
+      if (from === lockPath) throw renameErr;
+      return origRenameSync(from, to);
     };
 
-    // Clock where now() returns current real time so the stale check fires,
+    // Clock where now() returns current real time so the steal branch fires,
     // but sleep advances a fixed 1000ms per call so budget is hit deterministically.
     const realNow = Date.now();
     let _elapsed = 0;
     const sleepCalls = [];
     const clock = {
-      // Return a time far past the stale threshold so the stale branch is taken
       now() { return realNow + _elapsed; },
       sleep(ms) { sleepCalls.push(ms); _elapsed += 1000; },
     };
@@ -564,34 +684,31 @@ describe('acquireStateLock statSync/unlinkSync spin paths bounded (#1217)', () =
     assert.throws(
       () => acquireStateLock(statePath, clock),
       /acquireStateLock.*exceeded.*30000ms budget/,
-      'persistent unlinkSync failure in stale-lock path must throw budget-exceeded, not spin forever'
+      'persistent renameSync failure in steal path must throw budget-exceeded, not spin forever'
     );
 
     assert.ok(sleepCalls.length >= 1, `sleep must have been called at least once (got ${sleepCalls.length}); zero means busy-spin`);
     assert.ok(_elapsed >= 30000, `elapsed must reach 30 000 ms budget (got ${_elapsed}ms)`);
 
-    // Restore unlinkSync for cleanup
-    fs.unlinkSync = origUnlinkSync;
+    // Restore renameSync for cleanup
+    fs.renameSync = origRenameSync;
     try { origUnlinkSync(lockPath); } catch { /* ok */ }
   });
 
-  test('persistent unlinkSync failure error message names stale-lock-removal cause, not statSync (#1217 diagnostic)', () => {
-    // Regression guard for the misleading-error-context bug: when unlinkSync
-    // fails on the stale-lock path and checkBudgetAndSleep throws at the budget
-    // boundary, the outer statSync catch must NOT re-wrap it with
-    // "statSync failed after EEXIST".  The thrown error must contain the original
-    // context "stale lock removal failed" so operators can identify the real cause.
+  test('persistent renameSync failure error message names steal cause, not statSync (#1217 diagnostic)', () => {
+    // Regression guard for the misleading-error-context bug: when the steal's renameSync
+    // fails and checkBudgetAndSleep throws at the budget boundary, the outer statSync
+    // catch must NOT re-wrap it with "statSync failed after EEXIST".  The thrown error
+    // must name the real cause ("stale lock steal lost to racer") so operators can
+    // identify it.
     const lockPath = statePath + '.lock';
     fs.writeFileSync(lockPath, '99999');
-    const staleMs = 15000;
-    const staledTime = new Date(Date.now() - staleMs);
-    fs.utimesSync(lockPath, staledTime, staledTime);
 
-    // unlinkSync always fails — the budget will be exhausted on the first sleep.
-    const unlinkErr = Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
-    fs.unlinkSync = (p) => {
-      if (p === lockPath) throw unlinkErr;
-      return origUnlinkSync(p);
+    // renameSync always fails — the budget will be exhausted on the first sleep.
+    const renameErr = Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+    fs.renameSync = (from, to) => {
+      if (from === lockPath) throw renameErr;
+      return origRenameSync(from, to);
     };
 
     const realNow = Date.now();
@@ -608,17 +725,17 @@ describe('acquireStateLock statSync/unlinkSync spin paths bounded (#1217)', () =
       thrownErr = e;
     }
 
-    assert.ok(thrownErr, 'must throw when unlinkSync persistently fails and budget is exhausted');
+    assert.ok(thrownErr, 'must throw when renameSync persistently fails and budget is exhausted');
     assert.ok(
-      /stale lock removal failed/.test(thrownErr.message),
-      `error message must contain "stale lock removal failed" (got: ${thrownErr.message})`
+      /stale lock steal lost to racer/.test(thrownErr.message),
+      `error message must contain "stale lock steal lost to racer" (got: ${thrownErr.message})`
     );
     assert.ok(
       !/statSync failed after EEXIST/.test(thrownErr.message),
       `error message must NOT contain "statSync failed after EEXIST" (the misleading re-wrap) (got: ${thrownErr.message})`
     );
 
-    fs.unlinkSync = origUnlinkSync;
+    fs.renameSync = origRenameSync;
     try { origUnlinkSync(lockPath); } catch { /* ok */ }
   });
 
