@@ -101,9 +101,20 @@ export function resolveRuntimeNameFromCandidates(...candidates: unknown[]): stri
  *
  *   claude                      → .claude/CLAUDE.md
  *   codex, opencode, kilo, kimi → AGENTS.md
- *   copilot                     → copilot-instructions.md
+ *   copilot                     → .github/copilot-instructions.md
  *   antigravity, gemini         → GEMINI.md
  *   unknown / future runtimes   → AGENTS.md (safe cross-agent default)
+ *
+ * Source-of-truth references for each runtime's read path:
+ *   - copilot: GitHub Docs — repository-wide custom instructions are read ONLY
+ *     from `.github/copilot-instructions.md`; a root `copilot-instructions.md`
+ *     is not a read path. `AGENTS.md` is also read (agent instructions).
+ *     https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions
+ *     (Installer parity: runtime-config-adapter-registry.cts installSurface
+ *     'copilot-instructions' writes the same `.github/copilot-instructions.md`.)
+ *   - codex/opencode/kilo/kimi: AGENTS.md is the documented cross-agent
+ *     instruction file (agentsmd/agents.md convention).
+ *   - antigravity/gemini: GEMINI.md is Gemini CLI's contextFileName.
  *
  * Aliases are normalized via `canonicalizeRuntimeName` first, so inputs like
  * `codex-cli` resolve to `codex` → `AGENTS.md`. Replaces the prior codex-only
@@ -113,7 +124,7 @@ export function resolveRuntimeNameFromCandidates(...candidates: unknown[]): stri
 export function getProjectInstructionFile(runtime: unknown): string {
   const canonical = canonicalizeRuntimeName(runtime);
   if (canonical === 'claude') return '.claude/CLAUDE.md';
-  if (canonical === 'copilot') return 'copilot-instructions.md';
+  if (canonical === 'copilot') return '.github/copilot-instructions.md';
   if (canonical === 'antigravity' || canonical === 'gemini') return 'GEMINI.md';
   // codex, opencode, kilo, kimi, AND unknown/future runtimes all default to
   // root AGENTS.md (the safe cross-agent instruction file).

@@ -1131,7 +1131,7 @@ function cmdGenerateClaudeMd(cwd: string, options: CmdGenerateClaudeMdOptions, r
     // new-project.md bash workflow via `gsd-tools query
     // project-instruction-file`). Previously this was a codex-only override
     // (#3163) that left AGENTS-native runtimes (opencode/kilo/kimi) emitting
-    // CLAUDE.md; copilot now resolves to copilot-instructions.md, and
+    // CLAUDE.md; copilot now resolves to .github/copilot-instructions.md, and
     // antigravity/gemini to GEMINI.md. GSD_RUNTIME env var takes precedence
     // over config.runtime, mirroring detectRuntime().
     //

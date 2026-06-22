@@ -94,8 +94,8 @@ describe('runtime-name-policy getProjectInstructionFile (#1529)', () => {
     assert.strictEqual(getProjectInstructionFile('kimi'), 'AGENTS.md');
   });
 
-  test('copilot maps to copilot-instructions.md', () => {
-    assert.strictEqual(getProjectInstructionFile('copilot'), 'copilot-instructions.md');
+  test('copilot maps to .github/copilot-instructions.md (GitHub docs read path)', () => {
+    assert.strictEqual(getProjectInstructionFile('copilot'), '.github/copilot-instructions.md');
   });
 
   test('gemini maps to GEMINI.md', () => {
@@ -121,6 +121,6 @@ describe('runtime-name-policy getProjectInstructionFile (#1529)', () => {
     // gemini-cli is an alias for gemini.
     assert.strictEqual(getProjectInstructionFile('gemini-cli'), 'GEMINI.md');
     // github-copilot is an alias for copilot.
-    assert.strictEqual(getProjectInstructionFile('github-copilot'), 'copilot-instructions.md');
+    assert.strictEqual(getProjectInstructionFile('github-copilot'), '.github/copilot-instructions.md');
   });
 });
