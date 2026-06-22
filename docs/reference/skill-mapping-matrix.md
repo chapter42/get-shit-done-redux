@@ -24,9 +24,9 @@ For the transform each converter applies, see [ADR-1593 §3 — converter transf
 
 | Runtime | Skill dest (global) | Prefix | Nesting | Loader | Converter | Notes |
 |---------|---------------------|--------|---------|--------|-----------|-------|
-| **claude** | `skills/` | `gsd-` | flat | one-level (reverted from nested, #924) | `convertClaudeCommandToClaudeSkill` | Local scope ships commands+agents only (no `skills` kind). Plugin manifest (`ADR-766`) ships commands+hooks today; `skills` field is Phase B-provide. |
+| **claude** | `skills/` | `gsd-` | flat | one-level (reverted from nested, #924) | `convertClaudeCommandToClaudeSkill` | Local scope ships commands+agents only (no `skills` kind). Plugin manifest (ADR-766) ships skills via build-generated `skills/` dir (Phase B-provide, PR #1597, merged). |
 | **codex** | `skills/` | `gsd-` | flat | unconfirmed → conservative | `convertClaudeCommandToCodexSkill` | TOML config (`configFormat: toml`). Description truncated to 180 chars (`metadata.short-description`). `sandboxTier: codex-agent-sandbox`. |
-| **gemini** | — *(no skills kind)* | — | — | — | — | Commands-only (TOML `.toml` in `commands/gsd`). No skill surface today — Phase C1 assesses Gemini's extension/skill model. |
+| **gemini** | — *(no skills kind)* | — | — | — | — | Commands-only (TOML `.toml` in `commands/gsd`). No skill surface; extension model has no `skills` field (C1: N/A). |
 | **opencode** | `skills/` | `gsd-` | flat | recursive (`**` glob) | `convertClaudeCommandToOpencodeSkill` | XDG config home. Shares the opencode-family converter entry point (`convertClaudeCommandToOpencodeFamilySkill`). Also ships `command` (singular) commands. |
 | **kilo** | `skills/` | `gsd-` | flat | recursive (`**` glob) | `convertClaudeCommandToKiloSkill` | OpenCode fork; same `**` glob loader. `permissionWriter: kilo`. Also ships `command` commands. |
 | **cursor** | `skills/` | `gsd-` | flat | recursive | `convertClaudeCommandToCursorSkill` | Also ships flat `commands/` via `convertClaudeCommandToCursorCommand`. `configFormat: none`. |
@@ -63,15 +63,17 @@ The nesting flag is set per the verified loader behavior of each runtime. Source
 
 Per [ADR-1593 §5](../adr/1593-skill-mapping-converter-methodology.md#5-plugin--external-skill-provision--consumption-methodology), each platform's first-party packaging should provide and consume skills through the platform's *documented, native* mechanism.
 
-| Runtime | Provision model | Consumption model | Phase |
-|---------|-----------------|-------------------|-------|
-| **claude** | `.claude-plugin/plugin.json` `skills` field / `skills/` dir (ADR-766; today commands+hooks only) | Sub-agent `skills:` preload + runtime `Skill` tool (PR #1261 — merged) | B-provide / D |
-| **gemini** | `gemini-extension.json` (today commands-only, #775) | TBD — assess Gemini's extension/skill model | C1 |
-| **codex** | Codex extension model | TBD | C2 |
-| **opencode / kilo** | Recursive-loader plugin model | TBD | C3 |
-| **cursor, copilot, windsurf, codebuddy** | Flat-skill platform models | TBD | C4 |
-| **cline, qwen, hermes, augment, trae, antigravity** | Nested `gsd-ns-*` router models | TBD | C5 |
-| **kimi** | `kimi-agents` CLI module model | TBD | C6 |
+| Runtime | Provision model | Consumption model | Outcome |
+|---------|-----------------|-------------------|---------|
+| **claude** | `.claude-plugin/plugin.json` `"skills": "./skills/"` — build-generated dir (PR #1597, merged) | Sub-agent `skills:` preload + runtime `Skill` tool (PR #1261, merged) | **Implemented (Phase B)** |
+| **gemini** | **N/A** — `gemini-extension.json` supports `mcpServers` + `contextFileName` only; no `skills` field. Gemini CLI SDK lists skills as a future extension primitive (*"currently not implemented"*). | **N/A** — same rationale. | **C1: N/A** |
+| **codex** | **N/A** — no plugin/extension manifest model. Uses `AGENTS.md` + TOML via file-copy install. | **N/A** — same rationale. | **C2: N/A** |
+| **opencode / kilo** | **N/A** — no first-party plugin manifest. Recursive `skills/**/SKILL.md` glob loader scans the local config dir that `bin/install.js` writes to. | **N/A** — same rationale. | **C3: N/A** |
+| **cursor, copilot, windsurf, codebuddy** | **N/A** — IDE-based tools with no plugin skill-provision model. File-copy install only. | **N/A** — same rationale. | **C4: N/A** |
+| **cline, qwen, hermes, augment, trae, antigravity** | **N/A** — CLI tools with no plugin marketplace model. File-copy install only. | **N/A** — same rationale. | **C5: N/A** |
+| **kimi** | **N/A** — special `kimi-agents` kind but no plugin/extension manifest. File-copy install only. | **N/A** — same rationale. | **C6: N/A** |
+
+**Phase D (first-party packaging parity):** Complete. Claude Code's `.claude-plugin/plugin.json` is the only first-party manifest with a `skills` field (Phase B-provide, PR #1597). Gemini's `gemini-extension.json` is context-only (no skills field — C1 N/A). No other first-party packaging exists.
 
 > **Rejected for all platforms:** reading another plugin's ephemeral/undocumented cache (e.g. Claude Code's `${CLAUDE_PLUGIN_ROOT}` / `~/.claude/plugins/cache`). The platform's native mechanism is the contract; cache-reading is a workaround, not a fix.
 
