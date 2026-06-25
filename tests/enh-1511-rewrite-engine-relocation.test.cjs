@@ -91,6 +91,22 @@ describe('_computePathPrefix', () => {
     assert.equal(withWindows, '$HOME/.cursor/');
     assert.strictEqual(withWindows, withoutWindows);
   });
+
+  test('backslash-style resolvedTarget is normalized to forward slashes (#1615 regression)', () => {
+    // path.join on Windows produces backslashes; the returned prefix is
+    // substituted into markdown @-references which must use POSIX paths.
+    // Without normalization the backslashes leak into workflow file content
+    // and break substring checks on Windows CI.
+    const prefix = conversion._computePathPrefix({
+      isGlobal: false,
+      isOpencode: false,
+      isWindowsHost: true,
+      resolvedTarget: 'C:\\Users\\runner\\AppData\\Local\\Temp\\gsd-1615-windsurf',
+      homeDir: 'C:\\Users\\runner',
+    });
+    assert.strictEqual(prefix, 'C:/Users/runner/AppData/Local/Temp/gsd-1615-windsurf/');
+    assert.ok(!prefix.includes('\\'), `prefix must not contain backslashes: ${prefix}`);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -360,6 +376,33 @@ describe('single-owner reference-identity guard (ADR-1508 / #1511 Phase 2)', () 
       install._applyRuntimeRewrites,
       conversionCjs._applyRuntimeRewrites,
       'install.js must bind _applyRuntimeRewrites from conversion (not a local shim)',
+    );
+  });
+
+  // #1675 (ADR-1508): the augment converter family is single-sourced in the
+  // conversion module. install.js must re-bind (not re-define) these so there
+  // is exactly one body — the generative-drift hazard the dedup removes.
+  test('install.convertClaudeToAugmentMarkdown === conversion.convertClaudeToAugmentMarkdown (single converter)', () => {
+    assert.strictEqual(
+      install.convertClaudeToAugmentMarkdown,
+      conversionCjs.convertClaudeToAugmentMarkdown,
+      'install.js must bind convertClaudeToAugmentMarkdown from conversion (not a duplicate body)',
+    );
+  });
+
+  test('install.convertClaudeCommandToAugmentSkill === conversion.convertClaudeCommandToAugmentSkill (single converter)', () => {
+    assert.strictEqual(
+      install.convertClaudeCommandToAugmentSkill,
+      conversionCjs.convertClaudeCommandToAugmentSkill,
+      'install.js must bind convertClaudeCommandToAugmentSkill from conversion (not a duplicate body)',
+    );
+  });
+
+  test('install.convertClaudeAgentToAugmentAgent === conversion.convertClaudeAgentToAugmentAgent (single converter)', () => {
+    assert.strictEqual(
+      install.convertClaudeAgentToAugmentAgent,
+      conversionCjs.convertClaudeAgentToAugmentAgent,
+      'install.js must bind convertClaudeAgentToAugmentAgent from conversion (not a duplicate body)',
     );
   });
 });

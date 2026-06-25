@@ -85,6 +85,7 @@
  * UAT Audit:
  *   audit-uat                           Scan all phases for unresolved UAT/verification items
  *   uat render-checkpoint --file <path> Render the current UAT checkpoint block
+ *   uat classify-coverage --summary <path> Classify a SUMMARY coverage block into auto-passed vs human-UAT (#1602)
  *
  * Open Artifact Audit:
  *   audit-open [--json]                 Scan all .planning/ artifact types for unresolved items
@@ -221,9 +222,15 @@ const learnings = require('./lib/learnings.cjs');
 const gapChecker = require('./lib/gap-checker.cjs');
 const { routeStateCommand } = require('./lib/state-command-router.cjs');
 const { routeVerifyCommand } = require('./lib/verify-command-router.cjs');
+const { routeEvalCommand } = require('./lib/eval-command-router.cjs');
+const evalMod = require('./lib/eval.cjs');
 const { routeVerificationCommand } = require('./lib/verification-command-router.cjs');
 const verification = require('./lib/verification.cjs');
 const { routeInitCommand } = require('./lib/init-command-router.cjs');
+// Stale-bake guard (#1688): warns once when model config changed since agents
+// were last baked on static-frontmatter runtimes (codex/opencode). Lazy-required
+// here, invoked from case 'init' below.
+const { warnIfStaleBake } = require('./lib/stale-bake-guard.cjs');
 const loopResolver = require('./lib/loop-resolver.cjs');
 const capabilityState = require('./lib/capability-state.cjs');
 const capabilityWriter = require('./lib/capability-writer.cjs');
@@ -639,7 +646,7 @@ async function main() {
     'generate-dev-preferences, generate-slug, graphify, history-digest, init, intel, ' +
     'capability, classify-confidence, git, learnings, list-seeds, list-todos, loop, milestone, package-legitimacy, phase, phase-plan-index, phases, profile-questionnaire, ' +
     'profile-sample, progress, project-instruction-file, prompt-budget, requirements, research-plan, research-store, resolve-granularity, resolve-model, roadmap, scaffold, state, ' +
-    'task, template, user-story, validate, verify, verify-path-exists, verify-summary, workstream, worktree\n\n' +
+    'task, template, user-story, validate, verify, verify-path-exists, verify-summary, eval, workstream, worktree\n\n' +
     'Global flags:\n' +
     '  --raw              Emit raw output without post-processing\n' +
     '  --pick <field>     Extract a single field from JSON output (dot/bracket notation)\n' +
@@ -693,6 +700,9 @@ async function main() {
     // .planning/ access needed, and resolving project root would break workflow
     // invocations that run before .planning/ exists (new-project Step 1).
     'project-instruction-file',
+    // #1579: eval.score is pure arithmetic (covered/total + infra weights); it
+    // needs no .planning/ access, so skip the findProjectRoot traversal.
+    'eval',
   ]);
   if (!SKIP_ROOT_RESOLUTION.has(command)) {
     cwd = findProjectRoot(cwd);
@@ -1061,6 +1071,11 @@ async function runCommand(command, args, cwd, raw, defaultValue, originalCommand
       break;
     }
 
+    case 'eval': {
+      routeEvalCommand({ evalMod, args, cwd, raw, error });
+      break;
+    }
+
     // ─── Verification Status ───────────────────────────────────────────────
     //
     // verification status <phaseDir>
@@ -1360,12 +1375,16 @@ async function runCommand(command, args, cwd, raw, defaultValue, originalCommand
 
     case 'uat': {
       const subcommand = args[1];
-      const uat = require('./lib/uat.cjs');
       if (subcommand === 'render-checkpoint') {
+        const uat = require('./lib/uat.cjs');
         const options = parseNamedArgs(args, ['file']);
         uat.cmdRenderCheckpoint(cwd, options, raw);
+      } else if (subcommand === 'classify-coverage') {
+        const coverage = require('./lib/coverage.cjs');
+        const options = parseNamedArgs(args, ['summary', 'file']);
+        coverage.cmdClassify(cwd, options, raw);
       } else {
-        error('Unknown uat subcommand. Available: render-checkpoint', ERROR_REASON.SDK_UNKNOWN_COMMAND);
+        error('Unknown uat subcommand. Available: render-checkpoint, classify-coverage', ERROR_REASON.SDK_UNKNOWN_COMMAND);
       }
       break;
     }
@@ -1399,6 +1418,10 @@ async function runCommand(command, args, cwd, raw, defaultValue, originalCommand
     }
 
     case 'init': {
+      // #1688: warn (at most once per process) if the user edited model_overrides
+      // without re-running `gsd install <runtime>` on a static-frontmatter runtime.
+      // Best-effort, stderr-only, swallowed errors — never blocks the command.
+      try { warnIfStaleBake(cwd); } catch { /* guard must never break init */ }
       routeInitCommand({
         init,
         args,

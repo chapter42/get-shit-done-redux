@@ -318,7 +318,7 @@ npx @opengsd/gsd-core@latest --windsurf --global
 npx @opengsd/gsd-core@latest --devin-desktop --global
 ```
 
-Global skills land in `~/.codeium/windsurf/` (unchanged). Local workspace installs write to `.devin/skills/` (Devin Desktop's preferred location, #1085); the legacy `.windsurf/skills/` layout is still recognized for backward-compat. GSD installs skills, agents, and workspace rules.
+Use a workspace install for Windsurf slash commands. Workspace installs write `/gsd-*` commands as Windsurf workflow files under `.windsurf/workflows/`. Windsurf discovers those `.md` workflow files in Cascade and exposes them through the `/` menu. Global-scope Windsurf workflow installation is intentionally a no-op for now because global workflow locations are outside GSD's normal user-owned runtime config directory.
 
 **Override the install directory:**
 
@@ -494,6 +494,16 @@ Restart your runtime to pick up new commands and agents. Then start your first p
 ```
 
 If the command is not found after restart, verify the install directory matches the runtime's expected config path. The prerelease-editions section above covers the most common mismatch.
+
+### "… is not on your PATH" after install
+
+If the installer's global bin directory is not on your `PATH`, it prints a one-time warning with a copy-paste command for your shell. The suggestion list covers `zsh`, `bash`, and `fish` (plus PowerShell, cmd.exe, and Git Bash on Windows). For fish, run the line it prints:
+
+```fish
+fish_add_path '/path/to/global/bin'
+```
+
+If the directory is already on your PATH but the installer still warns, open a new fish session (`exec fish`) to pick up the change.
 
 ---
 

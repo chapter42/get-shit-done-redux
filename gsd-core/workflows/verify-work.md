@@ -178,7 +178,24 @@ fi
 
 The verb owns the canonical regex `/^As a .+, I want to .+, so that .+\.$/` and returns slot extractions plus per-error guidance when invalid. Halt UAT generation on failure — never attempt to derive user-flow steps from a non-User-Story goal (low-quality UAT).
 
-**Extract testable deliverables from SUMMARY.md:**
+**Coverage-aware deterministic classification (#1602).** Before deriving checkpoints from prose, classify each SUMMARY's structured `coverage:` block. For each `*-SUMMARY.md`:
+
+```bash
+COVERAGE=$(gsd_run query uat.classify-coverage --summary "$SUMMARY_FILE")
+```
+
+Read the JSON result (`mode`, `total`, `all_auto_covered`, `auto_passed[]`, `present[]`, `errors[]`):
+
+- **`mode: legacy`** (no `coverage:` block, OR a malformed block that could not be parsed) → **fall through** to the prose-based extraction below. Behavior is byte-identical to pre-#1602 for un-migrated SUMMARYs; do NOT auto-pass anything. If `errors[]` is non-empty (a `malformed_block`), note the broken coverage block to the user before proceeding so the SUMMARY can be fixed.
+- **`mode: coverage`** →
+  - Each `auto_passed[]` entry is recorded in UAT.md as `result: pass`, `source: automated` (see `create_uat_file`) — **do not present it as a checkpoint.** It is deterministically covered by the passing tests in its `verification` refs.
+  - Each `present[]` entry becomes a human UAT checkpoint: use its `description` as the test and carry its `rationale` into the checkpoint context. The `reason` (`human_judgment` / `no_verification` / `verification_not_passing` / `validation_failed`) explains why a human is needed.
+  - If `all_auto_covered` is `true` (every entry auto-passed, including the `coverage: []` case) → do NOT generate zero checkpoints; present a **single confirmation summary** listing the auto-covered deliverables with their covering tests and ask the user to confirm.
+  - Surface any `errors[]` to the user (malformed coverage block) but still treat their entries as human checkpoints — **never drop a deliverable** (fail-safe).
+
+The cold-start smoke test injection below still applies in `coverage` mode.
+
+**Extract testable deliverables from SUMMARY.md (legacy fallback — used when `mode: legacy`):**
 
 Parse for:
 1. **Accomplishments** - Features/functionality added
@@ -251,6 +268,18 @@ expected: [observable behavior]
 result: [pending]
 
 ...
+
+**Coverage auto-passed entries (#1602):** for each `auto_passed[]` entry from `uat classify-coverage`, write a Tests entry pre-resolved as automated — these are NOT presented to the user:
+
+```
+### N. [coverage description]
+expected: [coverage description]
+result: pass
+source: automated
+coverage_id: [D-id]
+```
+
+The `source: automated` marker is additive — existing consumers that read only `result:` are unaffected.
 
 ## Summary
 
@@ -497,6 +526,50 @@ If an active secure-phase step hook exists AND `SECURITY_FILE` exists: check fro
 ```
 
 If no active secure-phase step hook exists OR (`SECURITY_FILE` exists AND `threats_open` is `0`):
+
+If execution verification is waiting only on human UAT and this session recorded zero issues, canonicalize the report before the shared completion predicate:
+
+```bash
+PHASE_DIR=$(printf '%s' "$INIT" | jq -r '.phase_dir // empty')
+VERIFICATION_FILE=$(ls "${PHASE_DIR}"/*-VERIFICATION.md 2>/dev/null | head -1)
+VERIFICATION_STATUS=$(gsd_run query verification.status "$PHASE_DIR" 2>/dev/null)
+VERIFICATION_STATUS_VALUE=$(printf '%s' "$VERIFICATION_STATUS" | jq -r '.status // empty' 2>/dev/null || echo "")
+PHASE_VERIFICATION_STATUS="$VERIFICATION_STATUS_VALUE"
+if [ "$VERIFICATION_STATUS_VALUE" = "human_needed" ]; then
+  gsd_run query frontmatter.set "$VERIFICATION_FILE" --field status --value passed
+fi
+```
+
+If `PHASE_VERIFICATION_STATUS` is `stale`, stop before phase advancement and present:
+
+```
+All UAT tests passed, but phase advancement is blocked until canonical verification is fresh.
+
+Blocking completion:
+verification is stale
+
+- `/gsd:verify-work {phase}` — re-run verification against the latest summaries
+```
+
+Otherwise, check the shared UAT-plus-verification completion predicate before transition:
+
+```bash
+PHASE_COMPLETE=$(gsd_run phase uat-passed "{phase}" --require-verification)
+PHASE_COMPLETE_PASSED=$(printf '%s' "$PHASE_COMPLETE" | jq -r '.passed' 2>/dev/null || echo "false")
+PHASE_COMPLETE_BLOCKERS=$(printf '%s' "$PHASE_COMPLETE" | jq -r '.blockers[]?' 2>/dev/null || true)
+```
+
+If `PHASE_COMPLETE_PASSED` is not `true`, stop before phase advancement and present:
+
+```
+All UAT tests passed, but phase advancement is blocked until canonical verification passes.
+
+Blocking completion:
+{PHASE_COMPLETE_BLOCKERS}
+
+- `/gsd:execute-phase {phase}` — regenerate execution verification
+- `/gsd:verify-work {phase}` — resume UAT if blockers remain
+```
 
 **Auto-transition: mark phase complete in ROADMAP.md and STATE.md**
 

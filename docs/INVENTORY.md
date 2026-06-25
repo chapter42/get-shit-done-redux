@@ -283,6 +283,7 @@ Full roster at `gsd-core/references/*.md`. References are shared knowledge docum
 | `verification-patterns.md` | How to verify different artifact types. |
 | `verification-overrides.md` | Per-artifact verification override rules. |
 | `planning-config.md` | Full config schema and behavior. |
+| `security-asvs-levels.md` | OWASP ASVS level definitions for GSD threat modeling — per-level planner disposition rigor and auditor verification depth (L1 opportunistic, L2 standard, L3 comprehensive). |
 | `git-integration.md` | Git commit, branching, and history patterns. |
 | `git-planning-commit.md` | Planning directory commit conventions. |
 | `questioning.md` | Dream-extraction philosophy for project initialization. |
@@ -314,6 +315,7 @@ Full roster at `gsd-core/references/*.md`. References are shared knowledge docum
 | `universal-anti-patterns.md` | Universal anti-patterns to detect and avoid. |
 | `worktree-branch-check.md` | Canonical spawn-time worktree HEAD/base guard (worktree_branch_check): verify-only and fail-closed — per-agent-branch assertion, protected-ref refusal (#2924), and an exact-base assertion that halts with `exit 42` on mismatch so the orchestrator (worktree lifecycle owner) performs recovery (#48). Embedded into worktree sub-agent prompts at dispatch. |
 | `worktree-path-safety.md` | Worktree guard suite: HEAD assertion, cwd-drift sentinel (step 0a, #3097), and absolute-path guard (step 0b, #3099) — loaded into executor spawn prompts via `<execution_context>`. |
+| `untrusted-input-boundary.md` | Shared prompt-injection boundary (#1577) `@`-included by the 10 research/doc-ingest agents (`gsd-project-researcher`, `gsd-phase-researcher`, `gsd-ui-researcher`, `gsd-assumptions-analyzer`, `gsd-advisor-researcher`, `gsd-doc-classifier`, `gsd-doc-synthesizer`, `gsd-research-synthesizer`, `gsd-ai-researcher`, `gsd-domain-researcher`): treat fetched/read text as data-not-instructions, self-scan before use (PromptArmor 2507.15219), task-anchor (2504.20472), and fence quoted text with a fresh random delimiter per wrap (PPA 2506.05739). Prompt-level defense-in-depth (2503.00061); the hook scanner is a separate pattern pre-filter. |
 | `artifact-types.md` | Planning artifact type definitions. |
 | `phase-argument-parsing.md` | Phase argument parsing conventions. |
 | `decimal-phase-calculation.md` | Decimal sub-phase numbering rules. |
@@ -422,10 +424,13 @@ Full listing: `gsd-core/bin/lib/*.cjs`.
 | `context-utilization.cjs` | Pure classifier for `gsd-health --context` — turns (tokensUsed, contextWindow) into a `{ percent, state }` triage result against the 60%/70% fracture-point thresholds (#2792) |
 | `core-utils.cjs` | Shared low-level utilities — POSIX path normalization, sub-repo/subdirectory scanning, phase file stats, slug/one-liner/plan-id helpers, time-ago (extracted from `core.cjs`, ADR-857) |
 | `core.cjs` | Shared utilities and runtime fallbacks; compatibility re-exports for planning-workspace and I/O (`io.cjs`) helpers |
+| `coverage.cjs` | Deterministic SUMMARY `coverage:` block parser/validator/classifier for `gsd-tools uat classify-coverage`; routes deliverables to auto-pass vs human-UAT with a fail-safe default (#1602) |
 | `decisions.cjs` | Parses CONTEXT.md `<decisions>` blocks; accepts numeric (D-42) and alphanumeric (D-INFRA-01) IDs; returns `{id, text, category, tags, trackable}` |
 | `docs.cjs` | Docs-update workflow init, Markdown scanning, monorepo detection |
 | `drift.cjs` | Post-execute codebase structural drift detector (#2003): classifies file changes into new-dir/barrel/migration/route categories and round-trips `last_mapped_commit` frontmatter |
 | `edge-probe.cjs` | Spec-completeness edge probe (compiled from `src/edge-probe.cts`, gitignored) — the first adapter of the `probe-core` resolution model (ADR-550 Decision 7): shape classification, applicable-category relevance filter, edge proposal, and the `{explicit, backstop}` verification validators; delegates merge/rollup/CLI to `probe-core`; exports `classifyShape`, `applicableCategories`, `proposeEdges`, `analyzeCoverage`, `validateResolution`, `TAXONOMY` (#550) |
+| `eval-command-router.cjs` | Routes the `eval.score` verb (compiled from `src/eval-command-router.cts`, gitignored) — thin dispatcher into the eval scoring module (#1579) |
+| `eval.cjs` | Deterministic eval scoring (compiled from `src/eval.cts`, gitignored) — `computeEvalScore` (coverage*0.6 + infra*0.4, bands 80/60/40) + `cmdEvalScore` CLI domain guard; moves the gsd-eval-auditor's weighted arithmetic out of the prompt into code (#10 / #1579) |
 | `fallow-runner.cjs` | Fallow audit adapter for `/gsd-code-review`: binary resolution (`PATH` then `node_modules/.bin`), actionable missing-binary errors, and structural findings normalization |
 | `federated-config.cjs` | Defensive merge of capability-declared config slices into the loadConfig return value — ADR-857 phase 3b; exports `mergeFederatedConfig({ configSchema, isCentralKey, userConfig })` → `{ values, validKeys, warnings }`; live for migrated Capability keys that are atomically removed from the central config schema |
 | `frontmatter.cjs` | YAML frontmatter CRUD operations |

@@ -48,7 +48,7 @@ GSD ships six **namespace router bundles** (`gsd-ns-workflow`, `gsd-ns-project`,
 
 Each router's body contains a routing table. When the model receives a request, it reads the router, identifies the relevant sub-skill by name, then opens `skills/<name>/SKILL.md` via a file-path `Read`. The concrete skill is fully available — it is not invocable by bare name through the Skill tool's top-level listing, but is reachable through the router.
 
-The nested layout applies only to runtimes with confirmed non-recursive skill loaders: **Claude (global), Cline, Qwen, Hermes, Augment, Trae, Antigravity**. Recursive or unconfirmed loaders (Cursor, Codex, Copilot, Windsurf, CodeBuddy, OpenCode, Kilo) retain the flat layout unchanged.
+The nested layout applies only to runtimes with confirmed non-recursive skill loaders: **Cline, Qwen, Hermes, Augment, Trae**. Claude's loader is also non-recursive, but #924 reverted it flat because the Skill tool hard-errors on unknown names rather than re-routing via the router. Antigravity's loader is also non-recursive, but #1614 moved it flat because `agy` scans only `skills/<name>/SKILL.md` — nested sub-skills were unreachable. Other recursive or unconfirmed loaders (Cursor, Codex, Copilot, Windsurf, CodeBuddy, OpenCode, Kilo) retain the flat layout unchanged.
 
 | Namespace | Router bundle | Routes to |
 |-----------|--------------|-----------|
@@ -459,6 +459,19 @@ The review step slots in after execution and before UAT:
 ```text
 /gsd-execute-phase N  ->  /gsd-code-review N  ->  /gsd-code-review N --fix  ->  /gsd-verify-work N
 ```
+
+---
+
+## Coverage-Aware UAT Routing
+
+Historically, `/gsd-verify-work` turned every `## Accomplishments` bullet in a SUMMARY into a manual checkpoint — even deliverables already covered one-to-one by a passing unit test. With a green test suite you were still asked to re-confirm things the tests had already proven, every phase.
+
+GSD now lets the executor record, at authoring time, *how each deliverable was verified*. When a SUMMARY.md carries a `coverage:` frontmatter block (see [the `coverage:` block reference](COMMANDS.md#summary-coverage-block)), `/gsd-verify-work` routes deterministically:
+
+- **Auto-passed** — a deliverable marked `human_judgment: false` whose `verification` list is non-empty and entirely `pass` is recorded as passed (`source: automated`) and never prompted.
+- **Presented** — everything else is shown to you for sign-off: anything flagged `human_judgment: true` (visual adequacy, multi-device behaviour, subjective quality), anything with no verification, anything not fully passing, and any malformed entry.
+
+The asymmetry is deliberate. The worst outcome is auto-passing something broken that UAT existed to catch, so auto-pass is the narrow, fully-proven case and *uncertainty always routes back to you*. Flipping the flag alone cannot skip a prompt — a passing test reference is also required. SUMMARYs without a `coverage:` block behave exactly as before (prose-based checkpoints), so nothing changes for existing or un-migrated phases.
 
 ---
 
