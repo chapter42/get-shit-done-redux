@@ -1188,6 +1188,18 @@ function validateRuntimeBody(cap) {
           'runtime.hostIntegration.dispatch.maxDepth must be an integer >= -1 or "undocumented" (got: ' + JSON.stringify(d.maxDepth) + ')',
         );
       }
+
+      // backgroundDispatch — REQUIRED (all 16 runtime descriptors carry it, matching the sibling fields
+      // namedDispatch/nested/background/subagentToolkit/maxDepth which are all required).
+      if (!Object.prototype.hasOwnProperty.call(d, 'backgroundDispatch')) {
+        errors.push(
+          'runtime.hostIntegration.dispatch.backgroundDispatch is required (must be a boolean or "undocumented")',
+        );
+      } else if (typeof d.backgroundDispatch !== 'boolean' && d.backgroundDispatch !== 'undocumented') {
+        errors.push(
+          'runtime.hostIntegration.dispatch.backgroundDispatch must be a boolean or "undocumented" (got: ' + JSON.stringify(d.backgroundDispatch) + ')',
+        );
+      }
     }
   }
 
