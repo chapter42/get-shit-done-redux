@@ -9912,7 +9912,12 @@ function install(isGlobal, runtime = 'claude', options = {}) {
     if (fs.existsSync(gsdSourceCommands)) {
       try {
         fs.writeFileSync(path.join(targetDir, '.gsd-source'), gsdSourceCommands + '\n', 'utf8');
-      } catch (_) { /* non-fatal: surface degrades to walk-up resolution */ }
+      } catch (err) {
+        // Non-fatal: install proceeds. But on the Claude-global layout walk-up
+        // also fails (no commands/gsd source tree), so a silent write failure
+        // still leaves /gsd-surface broken at runtime — warn so it's diagnosable.
+        console.warn(`  ${yellow}!${reset} Could not write .gsd-source marker (${err.message}); /gsd-surface list/status may fail`);
+      }
     }
   }
 

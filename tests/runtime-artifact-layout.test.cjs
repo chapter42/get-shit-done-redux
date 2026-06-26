@@ -17,7 +17,7 @@
  *   runtime-artifact-layout-install-profiles.test.cjs — install-profiles seam
  */
 
-const { test, describe, beforeEach, afterEach } = require('node:test');
+const { test, describe, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
@@ -773,6 +773,51 @@ describe('#1477 .gsd-source marker provisioning', () => {
     assert.deepEqual(
       findGsdSourceMarkers(tmpRoot), [],
       'a claude local install must not provision the marker — local ships commands/gsd',
+    );
+  });
+
+  // ── Writer fault-injection: marker write failure is non-fatal + warns ────────
+  // CONTRIBUTING.md filesystem-write QA matrix: prove the marker-writer catch
+  // branch (bin/install.js) is reachable. A failed write (e.g. read-only target)
+  // must not abort the install, and — because walk-up also fails on this layout —
+  // must surface a diagnostic so the broken /gsd-surface is traceable.
+  test('marker write failure does not abort install and warns (locks the writer catch)', () => {
+    const claudeDir = path.join(tmpRoot, '.claude');
+    fs.mkdirSync(claudeDir, { recursive: true });
+
+    const markerPath = path.join(claudeDir, '.gsd-source');
+    const realWriteFileSync = fs.writeFileSync;
+    // Fault-inject ONLY the marker write; every other install write proceeds.
+    mock.method(fs, 'writeFileSync', (file, ...rest) => {
+      if (path.resolve(String(file)) === path.resolve(markerPath)) {
+        throw new Error('EACCES: read-only target (injected)');
+      }
+      return realWriteFileSync(file, ...rest);
+    });
+
+    // Capture console.warn around the install (runInstall's silenceConsole would
+    // otherwise swallow it); still guard process.exit.
+    const warnings = [];
+    const origExit = process.exit;
+    const origWarn = console.warn;
+    const origLog = console.log;
+    process.exit = (code) => { throw new Error(`process.exit(${code}) during install`); };
+    console.warn = (msg) => { warnings.push(String(msg)); };
+    console.log = () => {};
+    try {
+      assert.doesNotThrow(() => install(true /* isGlobal */, 'claude'),
+        'a marker write failure must be non-fatal — install proceeds via the catch');
+    } finally {
+      process.exit = origExit;
+      console.warn = origWarn;
+      console.log = origLog;
+      mock.restoreAll();
+    }
+
+    assert.ok(!fs.existsSync(markerPath), 'the injected fault must leave no marker on disk');
+    assert.ok(
+      warnings.some((w) => /\.gsd-source marker/.test(w)),
+      `the writer catch must warn for diagnosability; got: ${JSON.stringify(warnings)}`,
     );
   });
 
