@@ -338,6 +338,7 @@
       "graphify-command-router.cjs",
       "graphify.cjs",
       "gsd2-import.cjs",
+      "handshake-serialized.cjs",
       "hook-bus.cjs",
       "host-integration.cjs",
       "init-command-router.cjs",
