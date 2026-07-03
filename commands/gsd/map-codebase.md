@@ -9,7 +9,7 @@ allowed-tools:
   - Grep
   - Write
   - Agent
-requires: [config, new-project, plan-phase]
+requires: [config, new-project, plan-phase, onboard]
 ---
 
 <objective>
