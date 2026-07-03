@@ -263,6 +263,21 @@ describe('/gsd:onboard command contract', () => {
     );
     assert.ok(content.includes('new-project'), 'workflow must route to new-project');
     assert.ok(content.includes('.planning/onboarding/SUMMARY.md'), 'workflow must create onboarding summary');
+    assert.match(
+      content,
+      /ONBOARDING_ROOT=\{git_worktree_root \|\| _GSD_RUNTIME_ROOT\}/,
+      'workflow must resolve a single root for summary writes',
+    );
+    assert.match(
+      content,
+      /Create `\{ONBOARDING_ROOT\}\/\.planning\/onboarding\/SUMMARY\.md`/,
+      'workflow must anchor summary writes at onboarding root',
+    );
+    assert.match(
+      content,
+      /gsd_run --cwd "\$ONBOARDING_ROOT" query commit "docs: create onboarding summary" --files \.planning\/onboarding\/SUMMARY\.md/,
+      'workflow must commit the root-relative summary path from onboarding root',
+    );
     assert.match(content, /overwrite|idempotent|do not overwrite/i, 'workflow must protect existing planning');
     assert.ok(content.includes('requirements_exists'), 'workflow must parse requirements existence');
     assert.match(content, /REQUIREMENTS\.md: \{requirements_exists \? "present" : "missing"\}/, 'workflow must report missing requirements in partial planning');

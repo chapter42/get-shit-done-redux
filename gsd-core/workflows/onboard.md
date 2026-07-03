@@ -191,8 +191,12 @@ true, continue.
 
 ## 6. Write Onboarding Summary
 
-Create `.planning/onboarding/SUMMARY.md` only after PROJECT.md exists. If it already
-exists, update it only after confirmation; do not overwrite silently.
+Resolve `ONBOARDING_ROOT={git_worktree_root || _GSD_RUNTIME_ROOT}` before this step.
+Use `ONBOARDING_ROOT` for every filesystem write and commit in this step so nested-cwd
+invocations do not create `subdir/.planning` artifacts.
+
+Create `{ONBOARDING_ROOT}/.planning/onboarding/SUMMARY.md` only after PROJECT.md exists.
+If it already exists, update it only after confirmation; do not overwrite silently.
 
 If `onboarding_summary_exists` is true:
 
@@ -266,7 +270,7 @@ Detected planning docs: {doc_candidate_count}
 Commit the summary if `commit_docs` is true:
 
 ```bash
-gsd_run query commit "docs: create onboarding summary" --files .planning/onboarding/SUMMARY.md
+gsd_run --cwd "$ONBOARDING_ROOT" query commit "docs: create onboarding summary" --files .planning/onboarding/SUMMARY.md
 ```
 
 ## 7. Final Status
