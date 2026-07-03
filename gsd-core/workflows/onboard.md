@@ -36,9 +36,9 @@ if [[ "$INIT" == @file:* ]]; then INIT=$(cat "${INIT#@file:}"); fi
 
 Parse JSON fields: `planning_exists`, `project_exists`, `roadmap_exists`, `state_exists`,
 `has_existing_code`, `has_package_file`, `is_brownfield`, `has_codebase_map`,
-`missing_codebase_map_files`, `has_docs_candidates`, `doc_candidate_count`,
-`onboarding_summary_exists`, `text_mode`, `agents_installed`, `missing_agents`,
-`has_git`, `git_worktree_root`, `in_nested_subdir`.
+`codebase_map_files_present`, `missing_codebase_map_files`, `has_docs_candidates`,
+`doc_candidate_count`, `onboarding_summary_exists`, `text_mode`, `agents_installed`,
+`missing_agents`, `has_git`, `git_worktree_root`, `in_nested_subdir`.
 
 Set `TEXT_MODE=true` if `--text` is present OR `text_mode` from INIT is true.
 
@@ -148,9 +148,25 @@ Run this top-level command, then rerun /gsd:onboard:
 
 Exit.
 
-If `project_exists` is true, continue. If `roadmap_exists` or `state_exists` is false,
-warn that `.planning/` is partial and route to `/gsd:ingest-docs --mode merge` or
-`/gsd:new-project` rather than overwriting files in-place.
+If `project_exists` is true and either `roadmap_exists` or `state_exists` is false, print:
+
+```text
+Existing PROJECT.md was found, but planning is incomplete.
+
+Planning file status:
+- ROADMAP.md: {roadmap_exists ? "present" : "missing"}
+- STATE.md: {state_exists ? "present" : "missing"}
+
+Run one of these top-level commands, then rerun /gsd:onboard:
+
+/gsd:ingest-docs --mode merge
+/gsd:new-project
+```
+
+Exit. Do not write `.planning/onboarding/SUMMARY.md` and do not print the onboarding
+complete status for partial planning.
+
+If `project_exists`, `roadmap_exists`, and `state_exists` are all true, continue.
 
 ## 6. Write Onboarding Summary
 
@@ -165,15 +181,17 @@ Summary contents:
 **Generated:** {YYYY-MM-DD}
 **Status:** Ready for GSD workflow
 
-## Confirmed Artifacts
+## Artifact Status
 
 - Project: .planning/PROJECT.md
 - Roadmap: .planning/ROADMAP.md
 - State: .planning/STATE.md
-- Codebase map: .planning/codebase/
+- Codebase map: {has_codebase_map ? ".planning/codebase/ (complete)" : ".planning/codebase/ (incomplete or skipped)"}
 
 ## Codebase Map
 
+{if has_codebase_map}
+Confirmed files:
 - STACK.md
 - ARCHITECTURE.md
 - STRUCTURE.md
@@ -181,6 +199,11 @@ Summary contents:
 - TESTING.md
 - INTEGRATIONS.md
 - CONCERNS.md
+{else}
+Present files: {codebase_map_files_present}
+Missing files: {missing_codebase_map_files}
+Context strength: weaker because codebase mapping was skipped or is incomplete.
+{endif}
 
 ## Existing Docs
 
@@ -206,8 +229,8 @@ Print:
  GSD ► ONBOARDING COMPLETE ✓
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Created / confirmed:
-- .planning/codebase/
+Created / confirmed / status:
+- .planning/codebase/ {has_codebase_map ? "(complete)" : "(incomplete or skipped; missing: {missing_codebase_map_files})"}
 - .planning/PROJECT.md
 - .planning/REQUIREMENTS.md
 - .planning/ROADMAP.md
