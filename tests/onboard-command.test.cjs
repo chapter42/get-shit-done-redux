@@ -138,6 +138,29 @@ describe('init onboard public CLI projection', () => {
     assert.strictEqual(parsed.text_mode, true);
   });
 
+  test('reports fast codebase map readiness for the default fast subset', () => {
+    fs.mkdirSync(path.join(tmpDir, '.planning', 'codebase'), { recursive: true });
+    for (const name of ['STACK', 'INTEGRATIONS', 'ARCHITECTURE', 'STRUCTURE']) {
+      fs.writeFileSync(path.join(tmpDir, '.planning', 'codebase', `${name}.md`), `# ${name}\n`);
+    }
+    fs.writeFileSync(path.join(tmpDir, 'package.json'), '{"name":"fixture"}\n');
+
+    const result = runGsdTools(['init', 'onboard', '--fast', '--raw'], tmpDir, { HOME: tmpDir });
+    assert.ok(result.success, `init onboard should succeed: ${result.error}`);
+
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.has_codebase_map, false);
+    assert.strictEqual(parsed.has_fast_codebase_map, true);
+    assert.strictEqual(parsed.needs_codebase_map, false);
+    assert.deepStrictEqual(parsed.fast_codebase_map_files_required, [
+      'STACK.md',
+      'INTEGRATIONS.md',
+      'ARCHITECTURE.md',
+      'STRUCTURE.md',
+    ]);
+    assert.deepStrictEqual(parsed.missing_fast_codebase_map_files, []);
+  });
+
   test('reports missing requirements in otherwise existing planning', () => {
     fs.mkdirSync(path.join(tmpDir, '.planning'), { recursive: true });
     fs.writeFileSync(path.join(tmpDir, '.planning', 'PROJECT.md'), '# Project\n');
@@ -211,6 +234,10 @@ describe('/gsd:onboard command contract', () => {
     const content = fs.readFileSync(WF_PATH, 'utf8');
 
     assert.ok(content.includes('init onboard'), 'workflow must use init onboard projection');
+    assert.match(content, /gsd_run --cwd "\$_GSD_RUNTIME_ROOT" init onboard/, 'workflow must anchor init onboard at runtime root');
+    assert.ok(content.includes('has_fast_codebase_map'), 'workflow must parse fast map readiness');
+    assert.match(content, /CODEBASE_MAP_READY=.*has_fast_codebase_map/s, 'workflow must treat the fast subset as acceptable in fast mode');
+    assert.ok(content.includes('Run from worktree root'), 'workflow handoffs must be anchored at the worktree root');
     for (const runtimeHome of [
       'HERMES_HOME',
       'CURSOR_CONFIG_DIR',

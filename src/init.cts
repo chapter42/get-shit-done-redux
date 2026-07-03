@@ -109,6 +109,10 @@ const REQUIRED_CODEBASE_MAP_FILES = [
   'INTEGRATIONS.md', 'CONCERNS.md',
 ];
 
+const FAST_CODEBASE_MAP_FILES = [
+  'STACK.md', 'INTEGRATIONS.md', 'ARCHITECTURE.md', 'STRUCTURE.md',
+];
+
 const PLANNING_DOC_SEGMENTS = new Set([
   'adr', 'adrs', 'prd', 'prds', 'spec', 'specs', 'rfc', 'rfcs',
 ]);
@@ -902,10 +906,17 @@ function cmdInitIngestDocs(cwd: string, raw: boolean): void {
   output(withProjectRoot(cwd, result), raw);
 }
 
-function cmdInitOnboard(cwd: string, raw: boolean): void {
+function cmdInitOnboard(
+  cwd: string,
+  raw: boolean,
+  options: Record<string, unknown> = {},
+): void {
   const config = loadConfig(cwd);
   const codebaseMapFiles = listCodebaseMapFiles(cwd);
   const missingCodebaseMapFiles = REQUIRED_CODEBASE_MAP_FILES.filter(
+    (file) => !codebaseMapFiles.includes(file),
+  );
+  const missingFastCodebaseMapFiles = FAST_CODEBASE_MAP_FILES.filter(
     (file) => !codebaseMapFiles.includes(file),
   );
   const docCandidates = listPlanningDocCandidates(cwd);
@@ -913,6 +924,11 @@ function cmdInitOnboard(cwd: string, raw: boolean): void {
   const hasPackageFile = hasPackageFileInternal(cwd);
   const isBrownfield = hasCode || hasPackageFile;
   const hasCodebaseMap = codebaseMapFiles.length === REQUIRED_CODEBASE_MAP_FILES.length;
+  const fastMode = options['fast'] === true;
+  const hasFastCodebaseMap = missingFastCodebaseMapFiles.length === 0;
+  const needsCodebaseMap = isBrownfield && (
+    fastMode ? !hasFastCodebaseMap : !hasCodebaseMap
+  );
 
   const result: Record<string, unknown> = {
     commit_docs: config.commit_docs,
@@ -929,11 +945,15 @@ function cmdInitOnboard(cwd: string, raw: boolean): void {
     has_existing_code: hasCode,
     has_package_file: hasPackageFile,
     is_brownfield: isBrownfield,
-    needs_codebase_map: isBrownfield && !hasCodebaseMap,
+    fast_mode: fastMode,
+    needs_codebase_map: needsCodebaseMap,
     has_codebase_map: hasCodebaseMap,
+    has_fast_codebase_map: hasFastCodebaseMap,
     codebase_dir_exists: fs.existsSync(path.join(planningRoot(cwd), 'codebase')),
+    fast_codebase_map_files_required: FAST_CODEBASE_MAP_FILES,
     codebase_map_files_present: codebaseMapFiles,
     missing_codebase_map_files: missingCodebaseMapFiles,
+    missing_fast_codebase_map_files: missingFastCodebaseMapFiles,
 
     has_docs_candidates: docCandidates.length > 0,
     doc_candidate_count: docCandidates.length,
