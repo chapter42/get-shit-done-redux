@@ -247,6 +247,7 @@ function nextAction(params: {
   projectExists: boolean;
   mapReadiness: MapReadiness;
   onboardingSummaryExists: boolean;
+  onboardingSummaryPath: string;
   hasPlanningArtifacts: boolean;
   missingPlanningFiles: string[];
   handoffCommands: OnboardHandoffCommands;
@@ -302,7 +303,7 @@ function nextAction(params: {
   if (!params.onboardingSummaryExists) {
     return {
       kind: 'write-summary',
-      summary_path: '.planning/onboarding/SUMMARY.md',
+      summary_path: params.onboardingSummaryPath,
       reason: 'Onboarding summary is missing.',
     };
   }
@@ -344,11 +345,15 @@ function buildOnboardProjection(cwd: string, options: BuildOnboardProjectionOpti
   const needsCodebaseMap = isBrownfield && !hasCodebaseMap;
   const needsFastCodebaseMap = isBrownfield && !hasFastCodebaseMap;
   const needsOnboardCodebaseMap = options.fast ? needsFastCodebaseMap : needsCodebaseMap;
-  const projectExists = pathExistsInternal(cwd, '.planning/PROJECT.md');
+  const projectRootPath = path.join(planningRoot(cwd), 'PROJECT.md');
+  const projectScopedPath = path.join(planningDir(cwd), 'PROJECT.md');
+  const projectExists =
+    fs.existsSync(projectRootPath) || fs.existsSync(projectScopedPath);
   const requirementsExists = fs.existsSync(path.join(planningDir(cwd), 'REQUIREMENTS.md'));
   const roadmapExists = fs.existsSync(path.join(planningDir(cwd), 'ROADMAP.md'));
   const stateExists = fs.existsSync(path.join(planningDir(cwd), 'STATE.md'));
-  const onboardingSummaryExists = pathExistsInternal(cwd, '.planning/onboarding/SUMMARY.md');
+  const onboardingSummaryPath = path.join(planningRoot(cwd), 'onboarding', 'SUMMARY.md');
+  const onboardingSummaryExists = fs.existsSync(onboardingSummaryPath);
   const hasPlanningArtifacts = projectExists || requirementsExists || roadmapExists || stateExists;
   const missingPlanningFiles = planningMissing(
     projectExists,
@@ -383,6 +388,7 @@ function buildOnboardProjection(cwd: string, options: BuildOnboardProjectionOpti
       projectExists,
       mapReadiness: mapReadinessValue,
       onboardingSummaryExists,
+      onboardingSummaryPath: toPosixPath(path.relative(cwd, onboardingSummaryPath)),
       hasPlanningArtifacts,
       missingPlanningFiles,
       handoffCommands,
@@ -404,9 +410,12 @@ function buildOnboardProjection(cwd: string, options: BuildOnboardProjectionOpti
     doc_candidates: docCandidates,
 
     onboarding_summary_exists: onboardingSummaryExists,
-    onboarding_summary_path: '.planning/onboarding/SUMMARY.md',
+    onboarding_summary_path: toPosixPath(path.relative(cwd, onboardingSummaryPath)),
 
-    project_path: '.planning/PROJECT.md',
+    project_path: toPosixPath(path.relative(
+      cwd,
+      fs.existsSync(projectRootPath) ? projectRootPath : projectScopedPath,
+    )),
     requirements_path: toPosixPath(
       path.relative(cwd, path.join(planningDir(cwd), 'REQUIREMENTS.md')),
     ),
