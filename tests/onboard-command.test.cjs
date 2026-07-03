@@ -288,6 +288,16 @@ describe('/gsd:onboard command contract', () => {
       /CODEBASE_MAP_FINAL_STATUS=\(fast\/partial-but-accepted; required fast files present\)/,
       'final status must distinguish complete maps from accepted fast maps',
     );
+    assert.match(
+      content,
+      /If `project_exists` is false and `fast_mode && has_fast_codebase_map && !has_codebase_map` is true:/,
+      'workflow must not hand fast-partial maps directly to new-project',
+    );
+    assert.match(
+      content,
+      /Fast codebase context is accepted for onboarding, but \/gsd:new-project still requires the complete codebase map\./,
+      'workflow must explain why fast-partial onboarding stops before new-project',
+    );
     const deriveMapStatusIndex = content.indexOf('Before summary keep/update choices, derive map status values safely:');
     const keepExistingSummaryIndex = content.indexOf('If `onboarding_summary_exists` is true:');
     assert.ok(deriveMapStatusIndex >= 0, 'workflow must derive map status values');

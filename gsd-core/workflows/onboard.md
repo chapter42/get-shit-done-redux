@@ -149,6 +149,22 @@ Exit.
 
 ## 5. Project Initialization Gate
 
+If `project_exists` is false and `fast_mode && has_fast_codebase_map && !has_codebase_map` is true:
+
+Print:
+
+```text
+Fast codebase context is accepted for onboarding, but /gsd:new-project still requires the complete codebase map.
+
+Run from worktree root {git_worktree_root || _GSD_RUNTIME_ROOT}:
+
+/gsd:map-codebase
+
+Then rerun /gsd:onboard from the same worktree root.
+```
+
+Exit.
+
 If `project_exists` is false:
 
 Print:
