@@ -1263,3 +1263,286 @@ describe('#3258: no stale /gsd-intel slash-command references in product source 
 });
   });
 }
+
+// ────────────────────────────────────────────────────────────────────────
+// Folded from tests/bug-2351-intel-kilo-layout.test.cjs — consolidation epic #1969 (B7 #1976)
+// ────────────────────────────────────────────────────────────────────────
+{
+  const { describe: __foldDescribe } = require('node:test');
+  __foldDescribe("folded:bug-2351-intel-kilo-layout (consolidation epic #1969 B7 #1976)", () => {
+/**
+ * Regression test for bug #2351
+ *
+ * gsd-intel-updater used hardcoded canonical paths (`agents/*.md`,
+ * `commands/gsd/*.md`, `hooks/*.js`, etc.) that assumed the standard
+ * `.claude/` runtime layout. Under a `.kilo` install, the runtime root is
+ * `.kilo/`, and the command directory is `command/` (not `commands/gsd/`).
+ * Globs against the old paths returned no results, producing semantically
+ * empty intel files (`"entries": {}`).
+ *
+ * Fix: add runtime layout detection and a mapping table so the agent
+ * resolves paths against the correct root.
+ */
+
+'use strict';
+
+const { test, describe } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+
+const AGENT_PATH = path.join(__dirname, '..', 'agents', 'gsd-intel-updater.md');
+
+describe('bug #2351: intel updater kilo layout support', () => {
+  let content;
+
+  test('agent file exists', () => {
+    assert.ok(fs.existsSync(AGENT_PATH), 'agents/gsd-intel-updater.md must exist');
+    content = fs.readFileSync(AGENT_PATH, 'utf-8');
+  });
+
+  test('scope section includes layout detection step', () => {
+    content = content || fs.readFileSync(AGENT_PATH, 'utf-8');
+    const hasDetection =
+      content.includes('ls -d .kilo') ||
+      content.includes('Runtime layout detection') ||
+      content.includes('detected layout') ||
+      content.includes('layout detection');
+    assert.ok(
+      hasDetection,
+      'gsd-intel-updater.md must instruct the agent to detect the runtime layout ' +
+      '(.kilo vs .claude) before resolving canonical paths (#2351)'
+    );
+  });
+
+  test('scope section maps .kilo/agents path', () => {
+    content = content || fs.readFileSync(AGENT_PATH, 'utf-8');
+    assert.ok(
+      content.includes('.kilo/agents'),
+      'scope section must include the .kilo/agents/*.md path so agent count is correct under kilo layout'
+    );
+  });
+
+  test('scope section maps .kilo/command path (not commands/gsd)', () => {
+    content = content || fs.readFileSync(AGENT_PATH, 'utf-8');
+    assert.ok(
+      content.includes('.kilo/command'),
+      'scope section must include .kilo/command path — kilo uses "command/" not "commands/gsd/"'
+    );
+  });
+
+  test('scope section maps .kilo/hooks path', () => {
+    content = content || fs.readFileSync(AGENT_PATH, 'utf-8');
+    assert.ok(
+      content.includes('.kilo/hooks'),
+      'scope section must include .kilo/hooks path for hook file counts'
+    );
+  });
+
+  test('scope section retains standard layout paths for .claude installs', () => {
+    content = content || fs.readFileSync(AGENT_PATH, 'utf-8');
+    assert.ok(
+      content.includes('agents/*.md') || content.includes('Standard `.claude` layout'),
+      'scope section must still document the standard .claude layout paths for non-kilo installs'
+    );
+  });
+});
+  });
+}
+
+
+// ────────────────────────────────────────────────────────────────────────
+// Folded from tests/bug-3290-intel-updater-layout-block.test.cjs — consolidation epic #1969 (B7 #1976)
+// ────────────────────────────────────────────────────────────────────────
+{
+  const { describe: __foldDescribe } = require('node:test');
+  __foldDescribe("folded:bug-3290-intel-updater-layout-block (consolidation epic #1969 B7 #1976)", () => {
+// allow-test-rule: source-text-is-the-product — agents/gsd-intel-updater.md IS (see #3290)
+// the deployed agent instruction set. Asserting its text content tests the
+// deployed behaviour contract, not internal implementation.
+
+'use strict';
+
+/**
+ * Regression tests for bug #3290.
+ *
+ * The "Runtime layout detection" block in gsd-intel-updater.md ran
+ * unconditionally on every project analysed, emitting:
+ *
+ *   Layout detection returned "unknown" — this project is not a GSD-system
+ *   installation (no `.claude/gsd-core/` or `.kilo/` runtime root).
+ *
+ * for every ordinary (non-GSD-framework) user project. The verdict was already
+ * ignored by Steps 2-6 on non-GSD projects. The block was dead-but-noisy.
+ *
+ * Fix: gate the runtime bash detection on a positive "is-this-the-framework-
+ * repo" check (package.json name === "@opengsd/gsd-core") so it runs ONLY when
+ * analysing the GSD framework's own repo, OR remove the block entirely if no
+ * downstream consumers exist.
+ *
+ * Group A — gating contract:
+ *   The unconditional bash detection invocation must be absent OR wrapped in a
+ *   framework-repo guard. A bare `ls -d .kilo ... || echo "unknown"` with no
+ *   surrounding gate is the defect signature.
+ *
+ * Group B — no orphan consumers:
+ *   Confirm no other agent, command, or workflow file reads/consumes the layout-
+ *   detection verdict emitted by this block.
+ */
+
+const { describe, test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const ROOT = path.join(__dirname, '..');
+const AGENT_PATH = path.join(ROOT, 'agents', 'gsd-intel-updater.md');
+
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+/** Walk a directory recursively and return absolute paths of all .md files. */
+function walkMd(dir) {
+  const results = [];
+  if (!fs.existsSync(dir)) return results;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const abs = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...walkMd(abs));
+    } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      results.push(abs);
+    }
+  }
+  return results;
+}
+
+// ─── Group A — gating contract ───────────────────────────────────────────────
+
+describe('bug #3290 — Group A: layout-detection block must be gated or absent', () => {
+  let content;
+
+  test('agent file exists', () => {
+    assert.ok(fs.existsSync(AGENT_PATH), 'agents/gsd-intel-updater.md must exist');
+    content = fs.readFileSync(AGENT_PATH, 'utf-8');
+  });
+
+  test(
+    'bare unconditional detection invocation is absent — ' +
+    'the "ls -d .kilo ... || echo unknown" must not appear outside a framework-repo gate',
+    () => {
+      content = content || fs.readFileSync(AGENT_PATH, 'utf-8');
+
+      // The defect signature: the bash block runs unconditionally.
+      // We look for the exact shell one-liner that emits the verdict.
+      const bareDetectionPattern =
+        /ls -d \.kilo\b.*\|\|.*echo "?unknown"?/;
+
+      const hasBareDetection = bareDetectionPattern.test(content);
+
+      if (!hasBareDetection) {
+        // Block is fully removed — option B — pass.
+        return;
+      }
+
+      // Block is still present. Verify it is surrounded by a framework-repo gate.
+      // A valid gate checks package.json name or an equivalent positive signal
+      // that the current project IS the GSD framework's own repo.
+      const hasFrameworkGate =
+        content.includes('@opengsd/gsd-core') ||
+        content.includes('is-this-the-framework') ||
+        content.includes('framework repo') ||
+        content.includes('Only run') ||
+        /if.*package\.json.*gsd-core/i.test(content) ||
+        /Only.*layout detection.*GSD framework/i.test(content) ||
+        /Only.*layout detection.*framework/i.test(content);
+
+      assert.ok(
+        hasFrameworkGate,
+        'agents/gsd-intel-updater.md contains a bare unconditional layout-detection ' +
+        'bash block (`ls -d .kilo ... || echo unknown`) with no surrounding ' +
+        'framework-repo gate (#3290). ' +
+        'Either remove the block entirely, or wrap it in a check like:\n' +
+        '  if [[ "$(jq -r \'.name // ""\' package.json 2>/dev/null)" == "@opengsd/gsd-core" ]]; then\n' +
+        '    # ... detection block ...\n' +
+        '  fi'
+      );
+    }
+  );
+});
+
+// ─── Group B — no orphan downstream consumers ────────────────────────────────
+
+describe('bug #3290 — Group B: layout-detection verdict has no downstream consumers', () => {
+  const SOURCE_DIRS = [
+    path.join(ROOT, 'agents'),
+    path.join(ROOT, 'commands', 'gsd'),
+    path.join(ROOT, 'gsd-core', 'workflows'),
+  ];
+
+  /**
+   * Lines that reference the three possible verdict values emitted by the
+   * detection block: "claude", "kilo", "unknown" — ONLY as the verdict output
+   * of the gsd-intel-updater layout detection (not general runtime references).
+   *
+   * We look for the specific phrase "Layout detection returned" which is the
+   * sentinel the noisy output line uses.
+   */
+  test('no file contains "Layout detection returned" (the noisy verdict phrase)', () => {
+    const matches = [];
+
+    for (const dir of SOURCE_DIRS) {
+      const files = walkMd(dir);
+      for (const file of files) {
+        const rel = path.relative(ROOT, file);
+        const src = fs.readFileSync(file, 'utf-8');
+        if (src.includes('Layout detection returned')) {
+          // Collect matching lines for the error message
+          const lines = src.split(/\r?\n/)
+            .map((l, i) => ({ line: l, n: i + 1 }))
+            .filter(({ line }) => line.includes('Layout detection returned'));
+          matches.push({ rel, lines });
+        }
+      }
+    }
+
+    assert.strictEqual(
+      matches.length,
+      0,
+      'Expected zero files to contain "Layout detection returned" (the noisy verdict ' +
+      'phrase from the gsd-intel-updater layout-detection block). Found:\n' +
+      matches.map(({ rel, lines }) =>
+        `  ${rel}:\n${lines.map(({ n, line }) => `    L${n}: ${line.trim()}`).join('\n')}`
+      ).join('\n')
+    );
+  });
+
+  test('no agent or workflow instructs reading the layout-detection verdict output', () => {
+    // The verdict was: echo "kilo" | echo "claude" | echo "unknown"
+    // If any file references "Layout detection returned unknown" as an instruction
+    // to consume, that would be a consumer. We verify none exist outside of
+    // the producing file (gsd-intel-updater.md).
+    const verdictConsumerPattern = /Layout detection returned.*(unknown|claude|kilo)/i;
+    const consumers = [];
+
+    for (const dir of SOURCE_DIRS) {
+      const files = walkMd(dir);
+      for (const file of files) {
+        // Exclude the producer itself — it defines the message, not consumes it
+        if (path.basename(file) === 'gsd-intel-updater.md') continue;
+        const src = fs.readFileSync(file, 'utf-8');
+        if (verdictConsumerPattern.test(src)) {
+          consumers.push(path.relative(ROOT, file));
+        }
+      }
+    }
+
+    assert.deepStrictEqual(
+      consumers,
+      [],
+      'Expected no downstream consumer of the layout-detection verdict. Found:\n' +
+      consumers.map((f) => `  ${f}`).join('\n') +
+      '\nIf a consumer exists, use option A (gate) not option B (remove).'
+    );
+  });
+});
+  });
+}
