@@ -21,15 +21,6 @@
       ],
       "issue": "622"
     },
-    "intel": {
-      "files": [
-        "bug-2351-intel-kilo-layout.test.cjs",
-        "bug-3290-intel-updater-layout-block.test.cjs",
-        "intel-command-cutover.test.cjs",
-        "intel.test.cjs"
-      ],
-      "issue": "TBD"
-    },
     "milestone": {
       "files": [
         "milestone-archive.test.cjs",
@@ -39,14 +30,6 @@
         "milestone.test.cjs"
       ],
       "issue": "TBD"
-    },
-    "phase": {
-      "files": [
-        "bug-214-phase-researcher-write-truncation-contract.test.cjs",
-        "phase-dependency-levels.test.cjs",
-        "phase.test.cjs"
-      ],
-      "issue": "597"
     },
     "roadmap": {
       "files": [

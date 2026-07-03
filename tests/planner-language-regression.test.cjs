@@ -489,3 +489,196 @@ describe('bug #3805: fast.md log_to_state must be schema-aware', () => {
 });
   });
 }
+
+// ────────────────────────────────────────────────────────────────────────
+// Folded from tests/bug-2421-planner-grep-gate-hygiene.test.cjs — consolidation epic #1969 (B7 #1976)
+// ────────────────────────────────────────────────────────────────────────
+{
+  const { describe: __foldDescribe } = require('node:test');
+  __foldDescribe("folded:bug-2421-planner-grep-gate-hygiene (consolidation epic #1969 B7 #1976)", () => {
+// allow-test-rule: source-text-is-the-product (see #2421)
+// Workflow .md / agent .md / command .md / reference .md files — their text
+// IS what the runtime loads. Testing text content tests the deployed contract.
+// Per CONTRIBUTING.md exception matrix.
+
+/**
+ * Bug #2421: gsd-planner emits grep-count acceptance gates that count comment text
+ *
+ * The planner must instruct agents to use comment-aware grep patterns in
+ * <automated> verify blocks. Without this, descriptive comments in file
+ * headers count against the gate and force authors to reword them — the
+ * "self-invalidating grep gate" anti-pattern.
+ */
+
+const { describe, test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+
+const PLANNER_PATH = path.join(__dirname, '..', 'agents', 'gsd-planner.md');
+
+describe('gsd-planner grep gate hygiene (#2421)', () => {
+  test('gsd-planner.md exists in agents source dir', () => {
+    assert.ok(fs.existsSync(PLANNER_PATH), 'agents/gsd-planner.md must exist');
+  });
+
+  test('gsd-planner.md contains Grep gate hygiene rule', () => {
+    const content = fs.readFileSync(PLANNER_PATH, 'utf-8');
+    assert.ok(
+      content.includes('Grep gate hygiene') || content.includes('grep gate hygiene'),
+      'gsd-planner.md must contain a "Grep gate hygiene" rule to prevent self-invalidating grep gates'
+    );
+  });
+
+  test('gsd-planner.md explains self-invalidating grep gate anti-pattern', () => {
+    const content = fs.readFileSync(PLANNER_PATH, 'utf-8');
+    assert.ok(
+      content.includes('self-invalidating'),
+      'gsd-planner.md must describe the "self-invalidating" grep gate anti-pattern'
+    );
+  });
+
+  test('gsd-planner.md provides comment-stripping grep example', () => {
+    const content = fs.readFileSync(PLANNER_PATH, 'utf-8');
+    // Must show a pattern that excludes comment lines (grep -v or grep -vE)
+    assert.ok(
+      content.includes('grep -v') || content.includes('grep -vE') || content.includes('-v '),
+      'gsd-planner.md must provide a comment-stripping grep example (grep -v or grep -vE)'
+    );
+  });
+
+  test('gsd-planner.md warns against bare zero-count grep gates on whole files', () => {
+    const content = fs.readFileSync(PLANNER_PATH, 'utf-8');
+    assert.ok(
+      content.includes('== 0') || content.includes('zero-count') || content.includes('zero count'),
+      'gsd-planner.md must warn against bare zero-count grep gates without comment exclusion'
+    );
+  });
+
+  test('gsd-planner.md grep gate hygiene rule appears after Nyquist Rule', () => {
+    const content = fs.readFileSync(PLANNER_PATH, 'utf-8');
+    const nyquistIdx = content.indexOf('Nyquist Rule');
+    const grepGateIdx = content.indexOf('grep gate hygiene') !== -1
+      ? content.indexOf('grep gate hygiene')
+      : content.indexOf('Grep gate hygiene');
+
+    assert.ok(nyquistIdx !== -1, 'Nyquist Rule must be present in gsd-planner.md');
+    assert.ok(grepGateIdx !== -1, 'Grep gate hygiene must be present in gsd-planner.md');
+    assert.ok(
+      grepGateIdx > nyquistIdx,
+      `Grep gate hygiene rule (at ${grepGateIdx}) must appear after Nyquist Rule (at ${nyquistIdx})`
+    );
+  });
+});
+  });
+}
+
+
+// ────────────────────────────────────────────────────────────────────────
+// Folded from tests/bug-3087-planner-directive-language.test.cjs — consolidation epic #1969 (B7 #1976)
+// ────────────────────────────────────────────────────────────────────────
+{
+  const { describe: __foldDescribe } = require('node:test');
+  __foldDescribe("folded:bug-3087-planner-directive-language (consolidation epic #1969 B7 #1976)", () => {
+'use strict';
+
+// Regression guard for bug #3087.
+//
+// Between v1.38.3 and v1.38.4, agents/gsd-planner.md had 10 instances of
+// CRITICAL/MANDATORY/ALWAYS/MUST directive emphasis systematically removed.
+// The change was undocumented and conflicts with the stated intent of PR #2489
+// (the sycophancy-hardening pass that shipped in the same release). This test
+// enforces the restored directive language so the demotion cannot recur silently.
+
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const ROOT = path.join(__dirname, '..');
+let src;
+try {
+  src = fs.readFileSync(path.join(ROOT, 'agents', 'gsd-planner.md'), 'utf8');
+} catch (err) {
+  throw new Error(`agents/gsd-planner.md not found — was the file renamed? (${err.message})`);
+}
+
+const directives = [
+  { desc: 'User Decision Fidelity heading is CRITICAL',         pattern: /## CRITICAL: User Decision Fidelity/ },
+  { desc: 'Never Simplify heading is CRITICAL',                 pattern: /## CRITICAL: Never Simplify User Decisions/ },
+  { desc: 'Multi-Source Audit heading is MANDATORY',            pattern: /## Multi-Source Coverage Audit \(MANDATORY in every plan set\)/ },
+  { desc: 'Source audit uses "Audit ALL" imperative',           pattern: /Audit ALL four source types before finalizing/ },
+  { desc: 'Discovery is MANDATORY',                             pattern: /Discovery is MANDATORY unless/ },
+  { desc: 'Split signals use ALWAYS',                           pattern: /\*\*ALWAYS split if:\*\*/ },
+  { desc: 'requirements field doc uses MUST',                   pattern: /\*\*MUST\*\* list requirement IDs from ROADMAP/ },
+  { desc: 'Step 0 has CRITICAL requirement ID directive',       pattern: /\*\*CRITICAL:\*\* Every requirement ID MUST appear/ },
+  { desc: 'Write tool directive uses ALWAYS',                   pattern: /\*\*ALWAYS use the Write tool to create files\*\*/ },
+  { desc: 'File naming convention heading is CRITICAL',         pattern: /\*\*CRITICAL — File naming convention \(enforced\):\*\*/ },
+];
+
+for (const { desc, pattern } of directives) {
+  test(`gsd-planner.md: ${desc}`, () => {
+    assert.ok(
+      pattern.test(src),
+      `Directive enforcement missing from gsd-planner.md: "${desc}" — pattern ${pattern} not found. ` +
+      `This language was demoted in v1.38.4 (PR #2489) without documentation, conflicting with ` +
+      `the sycophancy-hardening intent of that release. See bug #3087.`,
+    );
+  });
+}
+  });
+}
+
+
+// ────────────────────────────────────────────────────────────────────────
+// Folded from tests/bug-3430-planner-phase-contract.test.cjs — consolidation epic #1969 (B7 #1976)
+// ────────────────────────────────────────────────────────────────────────
+{
+  const { describe: __foldDescribe } = require('node:test');
+  __foldDescribe("folded:bug-3430-planner-phase-contract (consolidation epic #1969 B7 #1976)", () => {
+// allow-test-rule: source-text-is-the-product (see #3430)
+// Planner markdown is the deployed planning contract; these checks lock the
+// exact canonical forms that downstream phase-plan-index accepts.
+
+'use strict';
+
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const PLANNER_PATH = path.join(__dirname, '..', 'agents', 'gsd-planner.md');
+
+function readPlanner() {
+  return fs.readFileSync(PLANNER_PATH, 'utf8');
+}
+
+test('#3430: planner SUMMARY instruction uses canonical padded phase/plan form', () => {
+  const content = readPlanner();
+  assert.match(
+    content,
+    /Create `\.planning\/phases\/XX-name\/\{padded_phase\}-\{plan\}-SUMMARY\.md` when done/,
+    'planner must instruct executors to write SUMMARY files in canonical padded-phase form'
+  );
+  assert.doesNotMatch(
+    content,
+    /After completion, create `\.planning\/phases\/XX-name\/\{phase\}-\{plan\}-SUMMARY\.md`/,
+    'planner must not instruct the broken {phase}-{plan}-SUMMARY.md form'
+  );
+});
+
+test('#3430: planner depends_on docs show canonical in-phase plan ids', () => {
+  const content = readPlanner();
+  assert.match(
+    content,
+    /depends_on:[^\n]*Use `01-01`\/`01-01-auth-hardening`/,
+    'planner must document canonical depends_on examples that phase-plan-index resolves'
+  );
+  assert.doesNotMatch(
+    content,
+    /depends_on:[^\n]*01-trust\/01/,
+    'planner must not document phase-slug/plan-number depends_on examples as canonical'
+  );
+});
+  });
+}
