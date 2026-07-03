@@ -259,7 +259,7 @@ function nextAction(params: {
     };
   }
 
-  if (!params.projectExists && params.fastMode && params.mapReadiness === 'fast') {
+  if (params.fastMode && params.mapReadiness === 'fast') {
     return {
       kind: 'complete-map-before-new-project',
       command: params.handoffCommands.map_codebase,

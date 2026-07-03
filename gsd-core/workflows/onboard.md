@@ -98,6 +98,8 @@ Skipping codebase mapping may give downstream steps weaker context, but existing
 Run from worktree root {ONBOARDING_ROOT}:
 
 {handoff_commands.ingest_docs}
+
+Then rerun {handoff_commands.onboard} from the same worktree root.
 ```
 
 Exit.
