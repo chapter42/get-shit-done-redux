@@ -177,6 +177,33 @@ true, continue.
 Create `.planning/onboarding/SUMMARY.md` only after PROJECT.md exists. If it already
 exists, update it only after confirmation; do not overwrite silently.
 
+If `onboarding_summary_exists` is true:
+
+- If `TEXT_MODE=true`, print:
+
+```text
+Onboarding summary already exists at .planning/onboarding/SUMMARY.md.
+
+1. Update summary — regenerate from current artifact status (Recommended)
+2. Keep existing summary — skip writing
+
+Enter number:
+```
+
+Stop and wait for the user's reply.
+
+- Otherwise use AskUserQuestion:
+  - header: "Onboarding Summary"
+  - question: "Onboarding summary already exists. Update it from current artifact status?"
+  - options:
+    - "Update summary" — Regenerate `.planning/onboarding/SUMMARY.md` (Recommended)
+    - "Keep existing summary" — Skip writing
+
+If the user chooses to keep the existing summary, skip to Step 7 without writing.
+
+If `onboarding_summary_exists` is false or the user confirms an update, write the summary
+using the template below.
+
 Summary contents:
 
 ```markdown

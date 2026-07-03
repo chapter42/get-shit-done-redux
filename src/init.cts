@@ -747,6 +747,9 @@ function cmdInitNewProject(cwd: string, raw: boolean): void {
 
   const hasCode = hasCodeFilesInternal(cwd);
   const hasPackageFile = hasPackageFileInternal(cwd);
+  const isBrownfield = hasCode || hasPackageFile;
+  const codebaseMapFiles = listCodebaseMapFiles(cwd);
+  const hasCodebaseMap = codebaseMapFiles.length === REQUIRED_CODEBASE_MAP_FILES.length;
 
   const result: Record<string, unknown> = {
     researcher_model: resolveModelInternal(cwd, 'gsd-project-researcher'),
@@ -756,14 +759,13 @@ function cmdInitNewProject(cwd: string, raw: boolean): void {
     commit_docs: config.commit_docs,
 
     project_exists: pathExistsInternal(cwd, '.planning/PROJECT.md'),
-    has_codebase_map: pathExistsInternal(cwd, '.planning/codebase'),
+    has_codebase_map: hasCodebaseMap,
     planning_exists: pathExistsInternal(cwd, '.planning'),
 
     has_existing_code: hasCode,
     has_package_file: hasPackageFile,
-    is_brownfield: hasCode || hasPackageFile,
-    needs_codebase_map:
-      (hasCode || hasPackageFile) && !pathExistsInternal(cwd, '.planning/codebase'),
+    is_brownfield: isBrownfield,
+    needs_codebase_map: isBrownfield && !hasCodebaseMap,
 
     ...getInitGitState(cwd),
 
