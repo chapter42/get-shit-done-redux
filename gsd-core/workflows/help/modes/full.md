@@ -62,6 +62,16 @@ Creates all `.planning/` artifacts:
 
 Usage: `/gsd:new-project`
 
+**`/gsd:onboard [--fast] [--text]`**
+Guide first-time onboarding for an existing codebase.
+
+- Detects brownfield code, existing planning docs, and partial `.planning/` state
+- Routes through `/gsd:map-codebase`, `/gsd:ingest-docs`, and `/gsd:new-project` in the safe order
+- Creates `.planning/onboarding/SUMMARY.md` after project setup
+- Idempotent: confirms existing artifacts and does not overwrite planning silently
+
+Usage: `/gsd:onboard`
+
 **`/gsd:map-codebase [--fast] [--focus <area>] [--query <term>]`**
 Map an existing codebase for brownfield projects.
 

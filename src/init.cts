@@ -86,6 +86,106 @@ void stripShippedMilestones;
 // Accept all bold/colon variants of the Requirements header (#2769)
 const REQUIREMENTS_HEADER_RE = /^\*\*Requirements:?\*\*[^\S\n]*:?[^\S\n]*([^\n]*)$/m;
 
+const CODE_EXTENSIONS = new Set([
+  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.py', '.go', '.rs', '.swift', '.java',
+  '.kt', '.kts', '.c', '.cpp', '.cc', '.h', '.hpp', '.cs', '.rb', '.php', '.dart',
+  '.m', '.mm', '.scala', '.groovy', '.lua', '.r', '.R', '.zig', '.ex', '.exs', '.clj',
+]);
+
+const CODE_SCAN_SKIP_DIRS = new Set([
+  'node_modules', '.git', '.planning', '.claude', '.codex', '__pycache__', 'target',
+  'dist', 'build', '.next', '.nuxt', '.svelte-kit', 'coverage', 'vendor', '.venv', 'venv',
+]);
+
+const PACKAGE_FILES = [
+  'package.json', 'requirements.txt', 'pyproject.toml', 'Cargo.toml', 'go.mod',
+  'Package.swift', 'build.gradle', 'build.gradle.kts', 'pom.xml', 'Gemfile',
+  'composer.json', 'pubspec.yaml', 'CMakeLists.txt', 'Makefile', 'build.zig',
+  'mix.exs', 'project.clj',
+];
+
+const REQUIRED_CODEBASE_MAP_FILES = [
+  'STACK.md', 'ARCHITECTURE.md', 'STRUCTURE.md', 'CONVENTIONS.md', 'TESTING.md',
+  'INTEGRATIONS.md', 'CONCERNS.md',
+];
+
+function hasCodeFilesInternal(dir: string, depth = 0): boolean {
+  if (depth > 3) return false;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+
+  for (const entry of entries) {
+    if (entry.isFile() && CODE_EXTENSIONS.has(path.extname(entry.name))) return true;
+    if (entry.isDirectory() && !CODE_SCAN_SKIP_DIRS.has(entry.name)) {
+      if (hasCodeFilesInternal(path.join(dir, entry.name), depth + 1)) return true;
+    }
+  }
+
+  return false;
+}
+
+function hasPackageFileInternal(cwd: string): boolean {
+  return PACKAGE_FILES.some((file) => pathExistsInternal(cwd, file));
+}
+
+function listPlanningDocCandidates(cwd: string): string[] {
+  const roots = ['docs', 'adr', 'adrs', 'prd', 'prds', 'spec', 'specs', 'rfcs'];
+  const candidates = new Set<string>();
+
+  const visit = (dir: string, relDir: string, depth: number): void => {
+    if (depth > 3) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      const rel = relDir ? `${relDir}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (!CODE_SCAN_SKIP_DIRS.has(entry.name)) {
+          visit(path.join(dir, entry.name), rel, depth + 1);
+        }
+        continue;
+      }
+
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue;
+      const upperName = entry.name.toUpperCase();
+      const relLower = rel.toLowerCase();
+      if (
+        /(^|[-_ ])(ADR|PRD|SPEC|RFC)([-_ ]|\.)/i.test(entry.name) ||
+        /^\d{4}[-_].+\.md$/i.test(entry.name) ||
+        relLower.includes('/adr') ||
+        relLower.includes('/prd') ||
+        relLower.includes('/spec') ||
+        upperName === 'REQUIREMENTS.md'
+      ) {
+        candidates.add(toPosixPath(rel));
+      }
+    }
+  };
+
+  for (const root of roots) {
+    const full = path.join(cwd, root);
+    if (fs.existsSync(full)) visit(full, root, 0);
+  }
+
+  return [...candidates].sort();
+}
+
+function listCodebaseMapFiles(cwd: string): string[] {
+  const codebaseDir = path.join(planningRoot(cwd), 'codebase');
+  if (!fs.existsSync(codebaseDir)) return [];
+  return REQUIRED_CODEBASE_MAP_FILES.filter((file) =>
+    fs.existsSync(path.join(codebaseDir, file)),
+  );
+}
+
 function listPhaseSummaryFiles(phaseDir: string): string[] {
   return (scanPhasePlans(phaseDir) as unknown as Record<string, string[]>)['summaryFiles'];
 }
@@ -625,68 +725,8 @@ function cmdInitNewProject(cwd: string, raw: boolean): void {
   const exaKeyFile = path.join(homedir, '.gsd', 'exa_api_key');
   const hasExaSearch = !!(process.env['EXA_API_KEY'] || fs.existsSync(exaKeyFile));
 
-  let hasCode = false;
-  let hasPackageFile = false;
-  try {
-    const codeExtensions = new Set([
-      '.ts', '.js', '.py', '.go', '.rs', '.swift', '.java',
-      '.kt', '.kts',
-      '.c', '.cpp', '.h',
-      '.cs',
-      '.rb',
-      '.php',
-      '.dart',
-      '.m', '.mm',
-      '.scala',
-      '.groovy',
-      '.lua',
-      '.r', '.R',
-      '.zig',
-      '.ex', '.exs',
-      '.clj',
-    ]);
-    const skipDirs = new Set([
-      'node_modules', '.git', '.planning', '.claude', '.codex',
-      '__pycache__', 'target', 'dist', 'build',
-    ]);
-    function findCodeFiles(dir: string, depth: number): boolean {
-      if (depth > 3) return false;
-      let entries: fs.Dirent[];
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return false;
-      }
-      for (const entry of entries) {
-        if (entry.isFile() && codeExtensions.has(path.extname(entry.name))) return true;
-        if (entry.isDirectory() && !skipDirs.has(entry.name)) {
-          if (findCodeFiles(path.join(dir, entry.name), depth + 1)) return true;
-        }
-      }
-      return false;
-    }
-    hasCode = findCodeFiles(cwd, 0);
-  } catch {
-    /* intentionally empty — best-effort detection */
-  }
-
-  hasPackageFile =
-    pathExistsInternal(cwd, 'package.json') ||
-    pathExistsInternal(cwd, 'requirements.txt') ||
-    pathExistsInternal(cwd, 'Cargo.toml') ||
-    pathExistsInternal(cwd, 'go.mod') ||
-    pathExistsInternal(cwd, 'Package.swift') ||
-    pathExistsInternal(cwd, 'build.gradle') ||
-    pathExistsInternal(cwd, 'build.gradle.kts') ||
-    pathExistsInternal(cwd, 'pom.xml') ||
-    pathExistsInternal(cwd, 'Gemfile') ||
-    pathExistsInternal(cwd, 'composer.json') ||
-    pathExistsInternal(cwd, 'pubspec.yaml') ||
-    pathExistsInternal(cwd, 'CMakeLists.txt') ||
-    pathExistsInternal(cwd, 'Makefile') ||
-    pathExistsInternal(cwd, 'build.zig') ||
-    pathExistsInternal(cwd, 'mix.exs') ||
-    pathExistsInternal(cwd, 'project.clj');
+  const hasCode = hasCodeFilesInternal(cwd);
+  const hasPackageFile = hasPackageFileInternal(cwd);
 
   const result: Record<string, unknown> = {
     researcher_model: resolveModelInternal(cwd, 'gsd-project-researcher'),
@@ -837,6 +877,57 @@ function cmdInitIngestDocs(cwd: string, raw: boolean): void {
     project_path: '.planning/PROJECT.md',
     commit_docs: config.commit_docs,
   };
+  output(withProjectRoot(cwd, result), raw);
+}
+
+function cmdInitOnboard(cwd: string, raw: boolean): void {
+  const config = loadConfig(cwd);
+  const codebaseMapFiles = listCodebaseMapFiles(cwd);
+  const missingCodebaseMapFiles = REQUIRED_CODEBASE_MAP_FILES.filter(
+    (file) => !codebaseMapFiles.includes(file),
+  );
+  const docCandidates = listPlanningDocCandidates(cwd);
+  const hasCode = hasCodeFilesInternal(cwd);
+  const hasPackageFile = hasPackageFileInternal(cwd);
+  const isBrownfield = hasCode || hasPackageFile;
+  const hasCodebaseMap = codebaseMapFiles.length === REQUIRED_CODEBASE_MAP_FILES.length;
+
+  const result: Record<string, unknown> = {
+    commit_docs: config.commit_docs,
+    text_mode:
+      !!config.text_mode || !!((config.workflow ?? {}) as Record<string, unknown>)['text_mode'],
+
+    project_exists: pathExistsInternal(cwd, '.planning/PROJECT.md'),
+    planning_exists: fs.existsSync(planningRoot(cwd)),
+    roadmap_exists: fs.existsSync(path.join(planningDir(cwd), 'ROADMAP.md')),
+    state_exists: fs.existsSync(path.join(planningDir(cwd), 'STATE.md')),
+    config_exists: fs.existsSync(path.join(planningDir(cwd), 'config.json')),
+
+    has_existing_code: hasCode,
+    has_package_file: hasPackageFile,
+    is_brownfield: isBrownfield,
+    needs_codebase_map: isBrownfield && !hasCodebaseMap,
+    has_codebase_map: hasCodebaseMap,
+    codebase_dir_exists: fs.existsSync(path.join(planningRoot(cwd), 'codebase')),
+    codebase_map_files_present: codebaseMapFiles,
+    missing_codebase_map_files: missingCodebaseMapFiles,
+
+    has_docs_candidates: docCandidates.length > 0,
+    doc_candidate_count: docCandidates.length,
+    doc_candidates: docCandidates,
+
+    onboarding_summary_exists: pathExistsInternal(cwd, '.planning/onboarding/SUMMARY.md'),
+    onboarding_summary_path: '.planning/onboarding/SUMMARY.md',
+
+    project_path: '.planning/PROJECT.md',
+    roadmap_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'ROADMAP.md'))),
+    state_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'STATE.md'))),
+    codebase_dir: toPosixPath(path.relative(cwd, path.join(planningRoot(cwd), 'codebase'))),
+    onboarding_dir: toPosixPath(path.relative(cwd, path.join(planningRoot(cwd), 'onboarding'))),
+
+    ...getInitGitState(cwd),
+  };
+
   output(withProjectRoot(cwd, result), raw);
 }
 
@@ -2606,6 +2697,7 @@ export = {
   cmdInitNewMilestone,
   cmdInitQuick,
   cmdInitIngestDocs,
+  cmdInitOnboard,
   cmdInitResume,
   cmdInitVerifyWork,
   cmdInitPhaseOp,

@@ -58,6 +58,25 @@ Initialize a new project with deep context gathering.
 
 ---
 
+### `/gsd-onboard`
+
+Guide an existing codebase through first-time GSD onboarding. The command checks repo state, routes you through codebase mapping, optional docs ingest, project initialization, and creates an onboarding summary once planning exists.
+
+| Flag | Description |
+|------|-------------|
+| `--fast` | Prefer the lightweight `/gsd-map-codebase --fast` mapping handoff |
+| `--text` | Use numbered plain-text gates instead of TUI menus |
+
+**Prerequisites:** Existing repo or planning docs. For empty greenfield projects, use `/gsd-new-project`.
+**Produces:** `.planning/codebase/` via map-codebase, `.planning/` via new-project or ingest-docs, and `.planning/onboarding/SUMMARY.md` after project setup.
+
+```bash
+/gsd-onboard           # Guided brownfield onboarding
+/gsd-onboard --fast    # Use lightweight codebase mapping first
+```
+
+---
+
 ### `/gsd-workspace`
 
 Manage GSD workspaces — create, list, or remove isolated workspace environments with repo copies and independent `.planning/` directories.
