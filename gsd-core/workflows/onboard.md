@@ -89,7 +89,7 @@ Exit.
 
 If the user skips mapping, continue with a warning.
 
-If `is_brownfield` is false and `planning_exists` is false, print:
+If `is_brownfield` is false and `planning_exists` is false and `has_docs_candidates` is false, print:
 
 ```text
 No existing code was detected. For a greenfield project, run:

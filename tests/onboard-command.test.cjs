@@ -229,6 +229,11 @@ describe('/gsd:onboard command contract', () => {
       /If `has_docs_candidates` is true and `project_exists` is false:/,
       'workflow must offer docs ingest before project setup even when codebase mapping already created .planning',
     );
+    assert.match(
+      content,
+      /If `is_brownfield` is false and `planning_exists` is false and `has_docs_candidates` is false, print:/,
+      'workflow must not send doc-only repos to new-project before the docs ingest gate',
+    );
     assert.ok(content.includes('new-project'), 'workflow must route to new-project');
     assert.ok(content.includes('.planning/onboarding/SUMMARY.md'), 'workflow must create onboarding summary');
     assert.match(content, /overwrite|idempotent|do not overwrite/i, 'workflow must protect existing planning');
