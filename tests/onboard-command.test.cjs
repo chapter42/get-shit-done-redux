@@ -165,6 +165,37 @@ describe('init onboard public CLI projection', () => {
     assert.deepStrictEqual(parsed.missing_fast_codebase_map_files, []);
   });
 
+  test('routes fast mapped repositories with planning docs to complete map before ingest', () => {
+    fs.mkdirSync(path.join(tmpDir, '.planning', 'codebase'), { recursive: true });
+    for (const name of ['STACK', 'INTEGRATIONS', 'ARCHITECTURE', 'STRUCTURE']) {
+      fs.writeFileSync(path.join(tmpDir, '.planning', 'codebase', `${name}.md`), `# ${name}\n`);
+    }
+    fs.writeFileSync(path.join(tmpDir, 'package.json'), '{"name":"fixture"}\n');
+    fs.mkdirSync(path.join(tmpDir, 'docs', 'adr'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, 'docs', 'adr', '0001-runtime.md'), '# ADR: Runtime\n');
+
+    const result = runGsdTools(['init', 'onboard', '--fast', '--raw'], tmpDir, { HOME: tmpDir });
+    assert.ok(result.success, `init onboard should succeed: ${result.error}`);
+
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.next_action.kind, 'complete-map-before-new-project');
+    assert.strictEqual(parsed.next_action.command, '/gsd:map-codebase');
+  });
+
+  test('routes planning artifacts without PROJECT.md to partial planning', () => {
+    fs.mkdirSync(path.join(tmpDir, '.planning'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'REQUIREMENTS.md'), '# Requirements\n');
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'ROADMAP.md'), '# Roadmap\n');
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'STATE.md'), '# State\n');
+
+    const result = runGsdTools('init onboard --raw', tmpDir, { HOME: tmpDir });
+    assert.ok(result.success, `init onboard should succeed: ${result.error}`);
+
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.next_action.kind, 'partial-planning');
+    assert.deepStrictEqual(parsed.next_action.missing, ['PROJECT.md']);
+  });
+
   test('projects the next action for code, docs, greenfield, partial planning, and summary states', () => {
     fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
     fs.writeFileSync(path.join(tmpDir, 'src', 'server.ts'), 'export const server = true;\n');

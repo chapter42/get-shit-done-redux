@@ -212,8 +212,14 @@ function mapFinalStatus(mapReadiness: MapReadiness): string {
   return 'missing';
 }
 
-function planningMissing(requirementsExists: boolean, roadmapExists: boolean, stateExists: boolean): string[] {
+function planningMissing(
+  projectExists: boolean,
+  requirementsExists: boolean,
+  roadmapExists: boolean,
+  stateExists: boolean,
+): string[] {
   const missing: string[] = [];
+  if (!projectExists) missing.push('PROJECT.md');
   if (!requirementsExists) missing.push('REQUIREMENTS.md');
   if (!roadmapExists) missing.push('ROADMAP.md');
   if (!stateExists) missing.push('STATE.md');
@@ -228,6 +234,7 @@ function nextAction(params: {
   projectExists: boolean;
   mapReadiness: MapReadiness;
   onboardingSummaryExists: boolean;
+  hasPlanningArtifacts: boolean;
   missingPlanningFiles: string[];
 }): OnboardNextAction {
   if (params.isBrownfield && params.needsCodebaseMap) {
@@ -235,6 +242,22 @@ function nextAction(params: {
       kind: 'map-codebase',
       command: params.fastMode ? '/gsd:map-codebase --fast' : '/gsd:map-codebase',
       reason: 'Existing code was detected, but the required .planning/codebase/ map is missing.',
+    };
+  }
+
+  if (!params.projectExists && params.fastMode && params.mapReadiness === 'fast') {
+    return {
+      kind: 'complete-map-before-new-project',
+      command: '/gsd:map-codebase',
+      reason: 'The fast map is enough for lightweight onboarding, but project setup still requires the complete codebase map.',
+    };
+  }
+
+  if (params.hasPlanningArtifacts && params.missingPlanningFiles.length > 0) {
+    return {
+      kind: 'partial-planning',
+      missing: params.missingPlanningFiles,
+      reason: 'Project planning exists but required planning files are missing.',
     };
   }
 
@@ -254,27 +277,11 @@ function nextAction(params: {
     };
   }
 
-  if (!params.projectExists && params.fastMode && params.mapReadiness === 'fast') {
-    return {
-      kind: 'complete-map-before-new-project',
-      command: '/gsd:map-codebase',
-      reason: 'The fast map is enough for lightweight onboarding, but project setup still requires the complete codebase map.',
-    };
-  }
-
   if (!params.projectExists) {
     return {
       kind: 'new-project',
       command: '/gsd:new-project',
       reason: 'Codebase context is ready for project initialization.',
-    };
-  }
-
-  if (params.missingPlanningFiles.length > 0) {
-    return {
-      kind: 'partial-planning',
-      missing: params.missingPlanningFiles,
-      reason: 'Project planning exists but required planning files are missing.',
     };
   }
 
@@ -315,7 +322,13 @@ function buildOnboardProjection(cwd: string, options: BuildOnboardProjectionOpti
   const roadmapExists = fs.existsSync(path.join(planningDir(cwd), 'ROADMAP.md'));
   const stateExists = fs.existsSync(path.join(planningDir(cwd), 'STATE.md'));
   const onboardingSummaryExists = pathExistsInternal(cwd, '.planning/onboarding/SUMMARY.md');
-  const missingPlanningFiles = planningMissing(requirementsExists, roadmapExists, stateExists);
+  const hasPlanningArtifacts = projectExists || requirementsExists || roadmapExists || stateExists;
+  const missingPlanningFiles = planningMissing(
+    projectExists,
+    requirementsExists,
+    roadmapExists,
+    stateExists,
+  );
 
   return {
     commit_docs: options.commitDocs,
@@ -341,6 +354,7 @@ function buildOnboardProjection(cwd: string, options: BuildOnboardProjectionOpti
       projectExists,
       mapReadiness: mapReadinessValue,
       onboardingSummaryExists,
+      hasPlanningArtifacts,
       missingPlanningFiles,
     }),
     needs_codebase_map: needsCodebaseMap,
