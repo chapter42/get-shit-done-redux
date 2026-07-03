@@ -15,6 +15,7 @@ const path = require('node:path');
 const uc = require(path.join(__dirname, '..', 'gsd-core', 'bin', 'lib', 'ui-consideration-probe.cjs'));
 const docPath = path.join(__dirname, '..', 'gsd-core', 'references', 'ui-consideration-probe.md');
 const domainPath = path.join(__dirname, '..', 'gsd-core', 'references', 'domain-probes.md');
+const templatePath = path.join(__dirname, '..', 'gsd-core', 'templates', 'UI-SPEC.md');
 
 // Extract the first-column ids from the `## Taxonomy` markdown table (skips the `id` header
 // row and the `|----|` separator; an id is a lowercase-hyphen token).
@@ -53,5 +54,15 @@ describe('ui-consideration-probe doc/code parity (ADPT-02)', () => {
   test('the doc names domain-probes.md as the companion open-prose bank (links, does not duplicate)', () => {
     const md = fs.readFileSync(docPath, 'utf8');
     assert.match(md, /domain-probes\.md/);
+  });
+});
+
+describe('UI-SPEC template `## UI Considerations` section (WIRE-02 SC3 de-dup)', () => {
+  // PARSED `##` headings only (never a raw copy substring) — a reformat that preserves the data
+  // does not fail; a missing/merged section does. Reuses the domainTopics() heading parser.
+  test('template ## headings include BOTH `UI Considerations` and `Copywriting Contract` as distinct sections', () => {
+    const headings = domainTopics(fs.readFileSync(templatePath, 'utf8'));
+    assert.ok(headings.includes('ui considerations'), 'template must gain a ## UI Considerations section');
+    assert.ok(headings.includes('copywriting contract'), 'template must retain the distinct ## Copywriting Contract section (de-dup, not a rename)');
   });
 });

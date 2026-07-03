@@ -282,3 +282,25 @@ describe('ui-consideration-probe: partial-cue recall gap (confirm is load-bearin
     assert.ok(cSet.size > hSet.size, 'the confirmed union must strictly exceed the heuristic set — proving the confirm step recovers missed coverage');
   });
 });
+
+// ══ WIRE-02 (Phase 2, #1867) — the UI-SPEC section round-trips the shipped lift, backward-compat,
+// idempotency. Typed returns only (this file carries no allow-test-rule header). The `## UI
+// Considerations` section format is LOCKED by the shipped plan-phase lift (plan-phase.md:921) +
+// probe-core `projectTruths`; these guards pin that the template documents the SAME format. ═════
+describe('ui-consideration-probe WIRE-02: backward-compat + format-match + idempotency (SC4)', () => {
+  test('projectTruths(undefined) and projectTruths([]) both === [] — an old UI-SPEC with no section lifts nothing, never throws (Hyrum SC4)', () => {
+    assert.deepEqual(core.projectTruths(undefined), []);
+    assert.deepEqual(core.projectTruths([]), []);
+  });
+  test('a mixed covered/backstop/unresolved considerations array projects to the exact plan-phase-lift shape, order preserved (format-match SC3)', () => {
+    const input = ['Empty state renders the documented "No results" copy.', { statement: 'Overflowing long labels truncate with an ellipsis.', verification: 'backstop' }, 'Loading shows a skeleton for the results table.'];
+    const out = core.projectTruths(input);
+    assert.equal(out[0], input[0]);                                              // covered → bare string
+    assert.deepEqual(out[1], { statement: input[1].statement, verification: 'backstop' }); // backstop → flat scalar
+    assert.equal(out[2], input[2]);                                             // order preserved
+  });
+  test('proposeElements is deterministic — re-running the probe rewrites byte-stable rows, never duplicated (idempotency SC4)', () => {
+    const els = [{ id: 'C1', text: 'A table listing all rows of results' }, { id: 'Z', text: 'xyzzy plugh' }];
+    assert.deepEqual(uc.proposeElements(els), uc.proposeElements(els));
+  });
+});
