@@ -110,6 +110,8 @@ Skipping codebase mapping may give {handoff_commands.new_project} weaker context
 Run from worktree root {ONBOARDING_ROOT}:
 
 {handoff_commands.new_project}
+
+Then rerun {handoff_commands.onboard} from the same worktree root.
 ```
 
 Exit.
@@ -155,6 +157,8 @@ Skipping docs ingest may omit existing ADR/PRD/SPEC/RFC context from {handoff_co
 Run from worktree root {ONBOARDING_ROOT}:
 
 {handoff_commands.new_project}
+
+Then rerun {handoff_commands.onboard} from the same worktree root.
 ```
 
 Exit.
@@ -185,6 +189,8 @@ If `next_action.kind == "new-project"`, print:
 Run from worktree root {ONBOARDING_ROOT}:
 
 {next_action.command}
+
+Then rerun {handoff_commands.onboard} from the same worktree root.
 ```
 
 Exit.
@@ -239,7 +245,7 @@ Summary template:
 - Existing ADR/PRD/SPEC/RFC candidates: {has_docs_candidates ? doc_candidate_count : 0}
 
 ## Recommended Next Step
-- {next_action.reason}
+- {handoff_commands.manager}
 ```
 
 If `commit_docs` is true, commit only the summary path from the onboarding root:
