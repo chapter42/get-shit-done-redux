@@ -5,6 +5,7 @@ import path from 'node:path';
 import coreUtils = require('./core-utils.cjs');
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- planning-workspace.cjs is an export= CommonJS module
 import planningWorkspace = require('./planning-workspace.cjs');
+import { formatGsdSlash, resolveRuntime } from './runtime-slash.cjs';
 
 const { pathExistsInternal, toPosixPath } = coreUtils;
 const { planningDir, planningRoot } = planningWorkspace;
@@ -42,6 +43,15 @@ const PLANNING_DOC_SEGMENTS = new Set([
 
 type MapReadiness = 'none' | 'fast' | 'complete';
 
+interface OnboardHandoffCommands {
+  ingest_docs: string;
+  manager: string;
+  map_codebase: string;
+  map_codebase_fast: string;
+  new_project: string;
+  onboard: string;
+}
+
 type OnboardNextAction =
   | { kind: 'map-codebase'; command: string; reason: string }
   | { kind: 'ingest-docs'; command: string; reason: string }
@@ -67,6 +77,8 @@ interface OnboardProjection {
   roadmap_exists: boolean;
   state_exists: boolean;
   config_exists: boolean;
+
+  handoff_commands: OnboardHandoffCommands;
 
   has_existing_code: boolean;
   has_package_file: boolean;
@@ -237,11 +249,12 @@ function nextAction(params: {
   onboardingSummaryExists: boolean;
   hasPlanningArtifacts: boolean;
   missingPlanningFiles: string[];
+  handoffCommands: OnboardHandoffCommands;
 }): OnboardNextAction {
   if (params.isBrownfield && params.needsOnboardCodebaseMap) {
     return {
       kind: 'map-codebase',
-      command: params.fastMode ? '/gsd:map-codebase --fast' : '/gsd:map-codebase',
+      command: params.fastMode ? params.handoffCommands.map_codebase_fast : params.handoffCommands.map_codebase,
       reason: 'Existing code was detected, but the required .planning/codebase/ map is missing.',
     };
   }
@@ -249,7 +262,7 @@ function nextAction(params: {
   if (!params.projectExists && params.fastMode && params.mapReadiness === 'fast') {
     return {
       kind: 'complete-map-before-new-project',
-      command: '/gsd:map-codebase',
+      command: params.handoffCommands.map_codebase,
       reason: 'The fast map is enough for lightweight onboarding, but project setup still requires the complete codebase map.',
     };
   }
@@ -265,7 +278,7 @@ function nextAction(params: {
   if (params.hasDocsCandidates && !params.projectExists) {
     return {
       kind: 'ingest-docs',
-      command: '/gsd:ingest-docs',
+      command: params.handoffCommands.ingest_docs,
       reason: 'Detected existing ADR/PRD/SPEC/RFC document(s) before project setup.',
     };
   }
@@ -273,7 +286,7 @@ function nextAction(params: {
   if (!params.isBrownfield && !params.projectExists && !params.hasDocsCandidates) {
     return {
       kind: 'new-project',
-      command: '/gsd:new-project',
+      command: params.handoffCommands.new_project,
       reason: 'No existing code or planning docs were detected.',
     };
   }
@@ -281,7 +294,7 @@ function nextAction(params: {
   if (!params.projectExists) {
     return {
       kind: 'new-project',
-      command: '/gsd:new-project',
+      command: params.handoffCommands.new_project,
       reason: 'Codebase context is ready for project initialization.',
     };
   }
@@ -300,7 +313,20 @@ function nextAction(params: {
   };
 }
 
+function buildHandoffCommands(cwd: string): OnboardHandoffCommands {
+  const runtime = resolveRuntime(cwd);
+  return {
+    ingest_docs: formatGsdSlash('ingest-docs', runtime) as string,
+    manager: formatGsdSlash('manager', runtime) as string,
+    map_codebase: formatGsdSlash('map-codebase', runtime) as string,
+    map_codebase_fast: formatGsdSlash('map-codebase --fast', runtime) as string,
+    new_project: formatGsdSlash('new-project', runtime) as string,
+    onboard: formatGsdSlash('onboard', runtime) as string,
+  };
+}
+
 function buildOnboardProjection(cwd: string, options: BuildOnboardProjectionOptions): OnboardProjection {
+  const handoffCommands = buildHandoffCommands(cwd);
   const codebaseMapFiles = listCodebaseMapFiles(cwd);
   const missingCodebaseMapFiles = REQUIRED_CODEBASE_MAP_FILES.filter(
     (file) => !codebaseMapFiles.includes(file),
@@ -342,6 +368,8 @@ function buildOnboardProjection(cwd: string, options: BuildOnboardProjectionOpti
     state_exists: stateExists,
     config_exists: fs.existsSync(path.join(planningDir(cwd), 'config.json')),
 
+    handoff_commands: handoffCommands,
+
     has_existing_code: hasCode,
     has_package_file: hasPackageFile,
     is_brownfield: isBrownfield,
@@ -357,6 +385,7 @@ function buildOnboardProjection(cwd: string, options: BuildOnboardProjectionOpti
       onboardingSummaryExists,
       hasPlanningArtifacts,
       missingPlanningFiles,
+      handoffCommands,
     }),
     needs_codebase_map: needsCodebaseMap,
     needs_fast_codebase_map: needsFastCodebaseMap,

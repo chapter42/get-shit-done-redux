@@ -163,7 +163,7 @@ describe('init onboard public CLI projection', () => {
     assert.strictEqual(parsed.needs_codebase_map, true);
     assert.strictEqual(parsed.needs_fast_codebase_map, false);
     assert.strictEqual(parsed.next_action.kind, 'complete-map-before-new-project');
-    assert.strictEqual(parsed.next_action.command, '/gsd:map-codebase');
+    assert.strictEqual(parsed.next_action.command, '/gsd-map-codebase');
     assert.match(parsed.next_action.reason, /complete codebase map/i);
     assert.deepStrictEqual(parsed.fast_codebase_map_files_required, [
       'STACK.md',
@@ -188,7 +188,7 @@ describe('init onboard public CLI projection', () => {
 
     const parsed = JSON.parse(result.output);
     assert.strictEqual(parsed.next_action.kind, 'complete-map-before-new-project');
-    assert.strictEqual(parsed.next_action.command, '/gsd:map-codebase');
+    assert.strictEqual(parsed.next_action.command, '/gsd-map-codebase');
   });
 
   test('routes planning artifacts without PROJECT.md to partial planning', () => {
@@ -212,7 +212,7 @@ describe('init onboard public CLI projection', () => {
     assert.ok(result.success, `init onboard should succeed: ${result.error}`);
     assert.deepStrictEqual(JSON.parse(result.output).next_action, {
       kind: 'map-codebase',
-      command: '/gsd:map-codebase',
+      command: '/gsd-map-codebase',
       reason: 'Existing code was detected, but the required .planning/codebase/ map is missing.',
     });
 
@@ -224,7 +224,7 @@ describe('init onboard public CLI projection', () => {
     assert.ok(result.success, `init onboard should succeed: ${result.error}`);
     assert.deepStrictEqual(JSON.parse(result.output).next_action, {
       kind: 'ingest-docs',
-      command: '/gsd:ingest-docs',
+      command: '/gsd-ingest-docs',
       reason: 'Detected existing ADR/PRD/SPEC/RFC document(s) before project setup.',
     });
 
@@ -234,7 +234,7 @@ describe('init onboard public CLI projection', () => {
     assert.ok(result.success, `init onboard should succeed: ${result.error}`);
     assert.deepStrictEqual(JSON.parse(result.output).next_action, {
       kind: 'new-project',
-      command: '/gsd:new-project',
+      command: '/gsd-new-project',
       reason: 'No existing code or planning docs were detected.',
     });
 
@@ -318,6 +318,29 @@ describe('init onboard public CLI projection', () => {
     assert.strictEqual(parsed.needs_codebase_map, true);
   });
 
+
+  test('formats onboard handoff commands for the resolved runtime', () => {
+    fs.writeFileSync(path.join(tmpDir, 'package.json'), '{"name":"fixture"}\n');
+
+    const result = runGsdTools(['init', 'onboard', '--raw'], tmpDir, {
+      HOME: tmpDir,
+      GSD_RUNTIME: 'codex',
+    });
+    assert.ok(result.success, `init onboard should succeed: ${result.error}`);
+
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.next_action.kind, 'map-codebase');
+    assert.strictEqual(parsed.next_action.command, '$gsd-map-codebase');
+    assert.deepStrictEqual(parsed.handoff_commands, {
+      map_codebase: '$gsd-map-codebase',
+      map_codebase_fast: '$gsd-map-codebase --fast',
+      ingest_docs: '$gsd-ingest-docs',
+      manager: '$gsd-manager',
+      new_project: '$gsd-new-project',
+      onboard: '$gsd-onboard',
+    });
+  });
+
   test('dotted query init.onboard matches direct init onboard', () => {
     fs.writeFileSync(path.join(tmpDir, 'package.json'), '{"name":"fixture"}\n');
 
@@ -376,7 +399,7 @@ describe('/gsd:onboard command contract', () => {
       'skip mapping must hand off explicitly instead of falling through to summary creation',
     );
     const partialPlanningSkipGuard =
-      'If `planning_exists && (!project_exists || !requirements_exists || !roadmap_exists || !state_exists)`, route the skip to the partial planning guard instead:';
+      'If `(project_exists || requirements_exists || roadmap_exists || state_exists) && (!project_exists || !requirements_exists || !roadmap_exists || !state_exists)`, route the skip to the partial planning guard instead:';
     const docsIngestSkipGuard =
       'If `has_docs_candidates && !project_exists`, route the skip to docs ingest instead:';
     assert.ok(
@@ -392,11 +415,11 @@ describe('/gsd:onboard command contract', () => {
       'skip mapping must check partial planning before docs ingest',
     );
     assert.ok(
-      content.includes('/gsd:ingest-docs'),
-      'skip mapping docs-preserving handoff must name the docs ingest command',
+      content.includes('{handoff_commands.ingest_docs}'),
+      'skip mapping docs-preserving handoff must use the projected docs ingest command',
     );
     assert.ok(
-      content.includes('Skipping codebase mapping may give /gsd:new-project weaker context.'),
+      content.includes('Skipping codebase mapping may give {handoff_commands.new_project} weaker context.'),
       'skip mapping must warn about weaker context',
     );
     assert.ok(
@@ -404,12 +427,15 @@ describe('/gsd:onboard command contract', () => {
       'skip docs ingest must hand off explicitly instead of falling through to summary creation',
     );
     assert.ok(
-      content.includes('Skipping docs ingest may omit existing ADR/PRD/SPEC/RFC context from /gsd:new-project.'),
+      content.includes('Skipping docs ingest may omit existing ADR/PRD/SPEC/RFC context from {handoff_commands.new_project}.'),
       'skip docs ingest must warn about omitted docs context',
     );
     assert.match(content, /do not overwrite/i, 'workflow must protect existing summary/planning');
     assert.match(content, /query commit "docs: create onboarding summary" --files \.planning\/onboarding\/SUMMARY\.md/);
     assert.ok(!content.includes('execute-phase'), 'onboarding must not execute implementation phases');
     assert.ok(!content.includes('gsd:ship'), 'onboarding must not ship work');
+    assert.ok(content.includes('Next recommended command: {handoff_commands.manager}'));
+    assert.ok(!content.includes('/gsd:ingest-docs'), 'skip handoffs must not hard-code legacy ingest command');
+    assert.ok(!content.includes('/gsd:new-project'), 'skip handoffs must not hard-code legacy new-project command');
   });
 });
