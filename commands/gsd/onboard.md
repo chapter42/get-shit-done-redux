@@ -10,7 +10,7 @@ allowed-tools:
   - Grep
   - Agent
   - AskUserQuestion
-requires: [config, new-project, map-codebase, ingest-docs]
+requires: [config, new-project, map-codebase, ingest-docs, manager]
 ---
 <runtime_note>
 **Copilot (VS Code):** Use `vscode_askquestions` wherever this workflow calls `AskUserQuestion`. They are equivalent — `vscode_askquestions` is the VS Code Copilot implementation of the same interactive question API.
