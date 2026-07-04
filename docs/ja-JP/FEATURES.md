@@ -818,6 +818,14 @@
 - REQ-ONBOARD-03: ADR/PRD/SPEC/RFC 候補があり project がない場合、`/gsd-new-project` の前に `/gsd-ingest-docs` を提示する。
 - REQ-ONBOARD-04: `PROJECT.md`、`REQUIREMENTS.md`、`ROADMAP.md`、`STATE.md` が揃うまで完了扱いにしない。
 - REQ-ONBOARD-05: project setup 後にのみ `.planning/onboarding/SUMMARY.md` を作成または確認する。
+- REQ-ONBOARD-06: 対話型メニューがない runtime 向けに、`--text` で番号付きプレーンテキスト gate をサポートする。
+
+**生成物:**
+| Artifact | 説明 |
+|----------|-------------|
+| `.planning/codebase/` | `/gsd-map-codebase` handoff が生成するコードベースマップ |
+| `.planning/PROJECT.md`, `REQUIREMENTS.md`, `ROADMAP.md`, `STATE.md` | `/gsd-new-project` または `/gsd-ingest-docs` が生成する planning setup |
+| `.planning/onboarding/SUMMARY.md` | Onboarding status、artifact index、next-command summary |
 
 ### 27a. 実行後コードベースドリフト検出
 

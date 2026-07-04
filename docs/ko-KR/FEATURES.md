@@ -749,6 +749,14 @@
 - REQ-ONBOARD-03: ADR/PRD/SPEC/RFC 후보가 있고 project가 없으면 `/gsd-new-project` 전에 `/gsd-ingest-docs`를 제안해야 합니다.
 - REQ-ONBOARD-04: `PROJECT.md`, `REQUIREMENTS.md`, `ROADMAP.md`, `STATE.md`가 모두 있을 때까지 완료로 보고하지 않아야 합니다.
 - REQ-ONBOARD-05: project setup 후에만 `.planning/onboarding/SUMMARY.md`를 만들거나 확인해야 합니다.
+- REQ-ONBOARD-06: 대화형 메뉴가 없는 runtime을 위해 `--text` 번호형 plain-text gate를 지원해야 합니다.
+
+**생성 산출물.**
+| 산출물 | 설명 |
+|----------|-------------|
+| `.planning/codebase/` | `/gsd-map-codebase` handoff가 생성한 코드베이스 맵 |
+| `.planning/PROJECT.md`, `REQUIREMENTS.md`, `ROADMAP.md`, `STATE.md` | `/gsd-new-project` 또는 `/gsd-ingest-docs`가 생성한 planning setup |
+| `.planning/onboarding/SUMMARY.md` | Onboarding status, artifact index, next-command summary |
 
 ---
 

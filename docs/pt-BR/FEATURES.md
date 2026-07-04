@@ -14,7 +14,7 @@ Para catálogo completo e detalhamento exaustivo, consulte [FEATURES.md em ingl�
 - **Commits atômicos por tarefa** para rastreabilidade e rollback
 - **Verificação pós-execução** com foco em objetivos da fase
 - **UAT guiado** via `/gsd-verify-work`
-- **Suporte brownfield** com `/gsd-map-codebase`
+- **Suporte brownfield** com `/gsd-onboard` e `/gsd-map-codebase`
 - **Workstreams** para trilhas paralelas sem colisão de estado
 - **Backlog, seeds e threads** para memória de médio/longo prazo
 

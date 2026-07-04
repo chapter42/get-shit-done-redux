@@ -818,6 +818,14 @@
 - REQ-ONBOARD-03：当存在 ADR/PRD/SPEC/RFC 候选且 project 不存在时，系统必须在 `/gsd-new-project` 前提供 `/gsd-ingest-docs`。
 - REQ-ONBOARD-04：在 `PROJECT.md`、`REQUIREMENTS.md`、`ROADMAP.md`、`STATE.md` 全部存在前，系统不得报告 onboarding 完成。
 - REQ-ONBOARD-05：系统必须仅在 project setup 后创建或确认 `.planning/onboarding/SUMMARY.md`。
+- REQ-ONBOARD-06：系统必须为没有交互式菜单的运行时支持 `--text` 编号纯文本关卡。
+
+**产出：**
+| Artifact | 说明 |
+|----------|-------------|
+| `.planning/codebase/` | 由 `/gsd-map-codebase` 交接生成的代码库映射 |
+| `.planning/PROJECT.md`, `REQUIREMENTS.md`, `ROADMAP.md`, `STATE.md` | 由 `/gsd-new-project` 或 `/gsd-ingest-docs` 生成的规划设置 |
+| `.planning/onboarding/SUMMARY.md` | Onboarding status、artifact index 和 next-command summary |
 
 ### 27a. 执行后代码库漂移检测
 
