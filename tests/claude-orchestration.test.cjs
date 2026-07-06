@@ -243,6 +243,14 @@ describe('detectWorkflowBackend', () => {
     assert.strictEqual(r.available, false);
   });
 
+  test('two pre-releases of the same triple order by their identifiers (SemVer §11)', () => {
+    assert.ok(compareSemver('0.3.149-rc.0', '0.3.149-rc.1') < 0, 'rc.0 < rc.1');
+    assert.ok(compareSemver('1.0.0-alpha.1', '1.0.0-alpha.2') < 0, 'alpha.1 < alpha.2');
+    assert.ok(compareSemver('1.0.0-rc.1', '1.0.0-rc.2') < 0, 'rc.1 < rc.2');
+    // numeric < alphanumeric at the same position
+    assert.ok(compareSemver('1.0.0-1', '1.0.0-alpha') < 0, 'numeric identifier < alphanumeric');
+  });
+
   test('missing/empty input -> inline, never throws (Postel: liberal-in-input)', () => {
     assert.strictEqual(detectWorkflowBackend({}).backend, 'inline');
     assert.strictEqual(detectWorkflowBackend(null).backend, 'inline');

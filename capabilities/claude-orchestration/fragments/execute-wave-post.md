@@ -29,8 +29,10 @@ cannot nest further subagents — #853 — and so degrades to sequential inline
 execution), execute-phase **emits a generated Workflow script** and lets the main
 loop orchestrate it:
 
-- **waves → `parallel()` barriers** — each wave is one barrier; the next wave
-  waits for the previous to complete.
+- **waves → one or more sequential `parallel()` barriers** — each wave is a
+  barrier group; when plans within a wave share `files_modified`, they are split
+  into separate sequential stages within that wave's barrier (the next wave
+  still waits for the previous wave to complete).
 - **plans → `agent(brief, { agentType: 'gsd-executor', isolation: 'worktree' })`**
   — the SAME executor agent and worktree isolation the inline path uses, so the
   produced `SUMMARY.md` and commits are identical.
@@ -48,8 +50,11 @@ The emitter is a pure function exposed through the capability command surface:
 [--phase-dir <dir>] [--budget <n>]` (or `require('gsd-core/bin/lib/claude-orchestration.cjs').emitWorkflowScript`
 directly). It maps the phase's wave/plan manifest to the Workflow script string
 and never invokes the Workflow tool itself; the orchestrator runs the emitted
-script. Use `gsd-tools claude-orchestration detect-backend` to resolve whether
-the Workflow backend should activate for the current runtime.
+script. Detection is resolved by the orchestrator calling the pure
+`detectWorkflowBackend` with the LIVE host descriptor (the CLI
+`gsd-tools claude-orchestration detect-backend` is a simulation harness that
+assumes a capable host unless `--no-nested-dispatch` is passed — it does not probe
+the real runtime; the orchestrator supplies the real descriptor).
 
 ## Fallback contract
 

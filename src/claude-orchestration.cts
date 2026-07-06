@@ -81,19 +81,49 @@ function compareSemver(a: string, b: string): number {
     return [parseInt(core[0], 10), parseInt(core[1], 10), parseInt(core[2], 10)];
   };
   const hasPre = (s: string): boolean => s.indexOf('-') !== -1;
+  const preIdentifiers = (s: string): string[] => (s.split('-')[1] || '').split('+')[0].split('.').filter((x) => x.length > 0);
   const am = parseTriple(a);
   const bm = parseTriple(b);
   for (let i = 0; i < 3; i++) {
     if (am[i] < bm[i]) return -1;
     if (am[i] > bm[i]) return 1;
   }
-  // Numeric triple is equal. SemVer 2.0.0 precedence: a version WITH a pre-release
-  // tag is LOWER than the same triple WITHOUT one. This keeps the floor fail-closed
-  // for pre-release builds of the floor (e.g. 0.3.149-rc.1 < 0.3.149 → inline).
+  // Numeric triple is equal. SemVer 2.0.0 §11 precedence:
+  //   - a version WITH a pre-release tag is LOWER than the same triple WITHOUT one
+  //     (keeps the floor fail-closed for pre-release builds of the GA floor);
+  //   - two pre-releases of the same triple are ordered by their dot-separated
+  //     identifiers (numeric < alphanumeric; numeric compared numerically,
+  //     alphanumeric lexically; fewer identifiers < more).
   const aPre = hasPre(a);
   const bPre = hasPre(b);
   if (aPre && !bPre) return -1;
   if (!aPre && bPre) return 1;
+  if (aPre && bPre) {
+    const ai = preIdentifiers(a);
+    const bi = preIdentifiers(b);
+    const len = Math.min(ai.length, bi.length);
+    for (let i = 0; i < len; i++) {
+      const ax = ai[i];
+      const bx = bi[i];
+      const aNum = /^\d+$/.test(ax);
+      const bNum = /^\d+$/.test(bx);
+      if (aNum && bNum) {
+        const an = parseInt(ax, 10);
+        const bn = parseInt(bx, 10);
+        if (an < bn) return -1;
+        if (an > bn) return 1;
+      } else if (aNum && !bNum) {
+        return -1; // numeric identifiers always lower than alphanumeric
+      } else if (!aNum && bNum) {
+        return 1;
+      } else {
+        if (ax < bx) return -1;
+        if (ax > bx) return 1;
+      }
+    }
+    if (ai.length < bi.length) return -1;
+    if (ai.length > bi.length) return 1;
+  }
   return 0;
 }
 
@@ -253,9 +283,15 @@ interface EmitErr {
 }
 
 /**
- * Partition a wave's plans into the fewest sequential stages such that no two
- * plans in the same stage share a modified file. Greedy first-fit: each plan
- * goes into the earliest stage where it does not overlap any plan already there.
+ * Partition a wave's plans into a near-minimal number of sequential stages (via
+ * greedy first-fit — not guaranteed optimal for arbitrary overlap graphs, but
+ * correct: no two plans sharing a file ever cohabit a stage) such that no two
+ * plans in the same stage share a modified file. Each plan goes into the earliest
+ * stage where it does not overlap any plan already there.
+ *
+ * A plan with an EMPTY files_modified set declares no files; it overlaps nothing
+ * and coalesces into stage 0 (same behavior as the inline path, which also cannot
+ * guard against undeclared concurrent writes — declare filesModified accurately).
  *
  * This is the same overlap rule execute-phase applies inline — the only difference
  * is the execution vehicle (Workflow `parallel()` vs one-agent-per-message).
