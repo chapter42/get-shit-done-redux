@@ -196,6 +196,7 @@ const RUNTIME_LABELS: Readonly<Record<string, string>> = {
   kimi: 'Kimi CLI',
   codebuddy: 'CodeBuddy',
   cline: 'Cline',
+  zcode: 'ZCode',
 };
 
 /**
@@ -266,7 +267,7 @@ export function getGlobalConfigHomeFragment(runtime: string): string {
  */
 const RUNTIME_FLAG_IDS = Object.freeze([
   'opencode', 'kilo', 'codex', 'copilot', 'antigravity', 'cursor',
-  'windsurf', 'augment', 'trae', 'qwen', 'hermes', 'codebuddy', 'cline', 'kimi',
+  'windsurf', 'augment', 'trae', 'qwen', 'hermes', 'codebuddy', 'cline', 'kimi', 'zcode',
 ] as const);
 
 /**
