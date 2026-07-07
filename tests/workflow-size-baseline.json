@@ -60,7 +60,7 @@
   "profile-user.md": 21246,
   "progress.md": 30599,
   "quick.md": 49183,
-  "reapply-patches.md": 20393,
+  "reapply-patches.md": 20312,
   "remove-phase.md": 8513,
   "remove-workspace.md": 7551,
   "resume-project.md": 17270,
@@ -89,5 +89,5 @@
   "update.md": 20914,
   "validate-phase.md": 10789,
   "verify-phase.md": 40772,
-  "verify-work.md": 35215
+  "verify-work.md": 38267
 }

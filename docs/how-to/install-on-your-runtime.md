@@ -102,6 +102,8 @@ The `gsd-tools` binary (installed as part of the `@opengsd/gsd-core` npm package
 
 Node.js (`node`) must also be available on your `PATH`. The plugin's always-on guard hooks (wired in `hooks/hooks.json`) are invoked as `node "${CLAUDE_PLUGIN_ROOT}/hooks/<script>"`. Some Claude Code distributions ship as a standalone binary and do not expose a `node` executable on `PATH`; in those environments the plugin's hooks will not run. Verify with `node --version` before relying on the plugin hooks.
 
+**Runtime build (self-healing).** The runtime CLI's compiled modules under `gsd-core/bin/lib/*.cjs` are build artifacts (ADR-457): they are compiled from `src/*.cts` by `npm run build:lib` and shipped prebuilt in the npm tarball. A plugin-marketplace or git-clone install materializes the repository tree directly and never runs that build step, so those files are initially absent. The CLI heals this automatically: the first `gsd-tools` invocation detects the missing output and compiles it once (using the bundled `typescript` devDependency), then proceeds normally. You may see a one-time `gsd: runtime library not built — compiling once…` notice on stderr; subsequent commands are unaffected. If auto-build cannot run (for example `node_modules` was pruned to production-only and `typescript` is unavailable), the CLI prints an actionable message telling you to run `npm install && npm run build:lib` in the plugin directory.
+
 #### Claude plugin marketplace discovery (ZCODE and compatible runtimes)
 
 GSD Core also ships a `.claude-plugin/marketplace.json` marketplace manifest (sibling to `plugin.json`). Runtimes that implement the Claude plugin marketplace contract — such as ZCODE — can discover and install GSD Core from a custom marketplace source without a manual clone:
@@ -403,6 +405,22 @@ npx @opengsd/gsd-core@latest --trae --global
 ```
 
 Skills land in `~/.trae/`. GSD installs skills, agents, and rule references.
+
+---
+
+### ZCode
+
+```bash
+npx @opengsd/gsd-core@latest --zcode --global
+```
+
+[ZCode](https://zcode.z.ai/en) is Z.ai's desktop Agentic Development Environment for the GLM-5.2 model. GSD installs skills (nested `SKILL.md` bundles), slash commands, and subagents under `~/.zcode/`:
+
+- **Skills** → `~/.zcode/skills/gsd-<name>/SKILL.md` (invoke with `$gsd-<name>` in chat)
+- **Commands** → `~/.zcode/commands/gsd-<name>.md` (invoke with `/gsd-<name>`)
+- **Subagents** → `~/.zcode/agents/gsd-<name>.md`
+
+ZCode's skill format is identical to Claude Code's, so no runtime-specific converter is required — GSD lands as a pure declarative descriptor with no hardcoded installer branches. ZCode also natively imports skills and MCP config from `~/.claude`; if you install GSD for **both** Claude and ZCode, you may see duplicate GSD skills inside ZCode, which is expected. To connect ZCode's MCP servers to GSD's companion server, see [how to connect the GSD MCP server](connect-gsd-mcp-server.md).
 
 ---
 
