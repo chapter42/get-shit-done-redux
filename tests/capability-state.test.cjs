@@ -15,10 +15,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { cleanup } = require('./helpers.cjs');
+const { cleanup, runGsdTools } = require('./helpers.cjs');
 
 const {
   resolveCapabilityState,
+  resolveCapabilityRuntimeState,
   isCapabilityActive,
   _isSafePropKey,
   _loadInstalledSkillsManifest,
@@ -2025,6 +2026,179 @@ describe('#1459 IC-04: capability-state threads gsdHome to the overlay loader', 
       if (prev === undefined) delete process.env.GSD_HOME; else process.env.GSD_HOME = prev;
       cleanup(home);
       cleanup(cwd);
+    }
+  });
+});
+
+describe('regressions: --runtime override bypasses persisted runtime (#2003)', () => {
+  // #2003: `capability state` and `loop render-hooks` parsed only --config-dir,
+  // never --runtime. resolveCapabilityRuntimeState derived the config dir from
+  // resolveRuntime(cwd) (GSD_RUNTIME → config.runtime → 'claude'), so a repo
+  // with persisted runtime:"codex" resolved the config dir to ~/.codex — where
+  // the Claude skill isn't installed → surfaced:false. Fix: thread an explicit
+  // --runtime override through both commands into resolveCapabilityRuntimeState
+  // so it bypasses the persisted-runtime fallback (mirrors the update-context /
+  // effort sync precedent).
+
+  function writePersistedRuntime(tmpDir, runtime) {
+    fs.mkdirSync(path.join(tmpDir, '.planning', 'phases'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'config.json'),
+      JSON.stringify({ runtime }),
+      'utf8',
+    );
+  }
+
+  test('resolveCapabilityRuntimeState: runtimeOverride="claude" bypasses persisted config.runtime:"codex"', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cap-rt-override-'));
+    try {
+      writePersistedRuntime(tmpDir, 'codex');
+      const runtimeHomes = require('../gsd-core/bin/lib/runtime-homes.cjs');
+      const expectedClaudeDir = runtimeHomes.getGlobalConfigDir('claude');
+      const expectedCodexDir = runtimeHomes.getGlobalConfigDir('codex');
+      // Persisted runtime is codex; explicit override is claude. The override
+      // MUST win (resolveRuntime is never consulted when an override is given,
+      // so GSD_RUNTIME env cannot interfere either).
+      const result = resolveCapabilityRuntimeState(tmpDir, undefined, undefined, 'claude');
+      assert.strictEqual(result.runtimeConfigDir, expectedClaudeDir,
+        '--runtime claude must override persisted runtime:"codex"');
+      assert.notStrictEqual(result.runtimeConfigDir, expectedCodexDir,
+        'must NOT resolve to the codex config dir when --runtime claude is explicit');
+    } finally {
+      cleanup(tmpDir);
+    }
+  });
+
+  test('resolveCapabilityRuntimeState: no override still honours persisted config.runtime (unchanged, regression guard)', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cap-rt-no-override-'));
+    // Control GSD_RUNTIME so resolveRuntime deterministically reads config.runtime.
+    const savedGsdRuntime = process.env.GSD_RUNTIME;
+    delete process.env.GSD_RUNTIME;
+    try {
+      writePersistedRuntime(tmpDir, 'codex');
+      const runtimeHomes = require('../gsd-core/bin/lib/runtime-homes.cjs');
+      const expectedCodexDir = runtimeHomes.getGlobalConfigDir('codex');
+      // No override → persisted codex wins (existing behavior preserved).
+      const result = resolveCapabilityRuntimeState(tmpDir, undefined, undefined, undefined);
+      assert.strictEqual(result.runtimeConfigDir, expectedCodexDir,
+        'without --runtime, persisted config.runtime:"codex" still drives resolution (unchanged)');
+    } finally {
+      if (savedGsdRuntime === undefined) delete process.env.GSD_RUNTIME;
+      else process.env.GSD_RUNTIME = savedGsdRuntime;
+      cleanup(tmpDir);
+    }
+  });
+
+  test('resolveCapabilityRuntimeState: runtimeOverride canonicalizes aliases (codex-app -> codex)', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cap-rt-alias-'));
+    try {
+      writePersistedRuntime(tmpDir, 'claude');
+      const runtimeHomes = require('../gsd-core/bin/lib/runtime-homes.cjs');
+      const expectedCodexDir = runtimeHomes.getGlobalConfigDir('codex');
+      // Alias "codex-app" canonicalizes to "codex" via runtime-name-policy.
+      const result = resolveCapabilityRuntimeState(tmpDir, undefined, undefined, 'codex-app');
+      assert.strictEqual(result.runtimeConfigDir, expectedCodexDir,
+        '--runtime codex-app (alias) must canonicalize to codex');
+    } finally {
+      cleanup(tmpDir);
+    }
+  });
+
+  test('CLI: `capability state --runtime claude` reports the Claude config dir despite persisted runtime:"codex"', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cap-rt-cli-'));
+    try {
+      writePersistedRuntime(tmpDir, 'codex');
+      const result = runGsdTools('capability state --runtime claude --raw', tmpDir);
+      assert.ok(result.success, `capability state --runtime should succeed: ${result.error || ''}`);
+      const parsed = JSON.parse(result.output);
+      const runtimeHomes = require('../gsd-core/bin/lib/runtime-homes.cjs');
+      assert.strictEqual(parsed.runtimeConfigDir, runtimeHomes.getGlobalConfigDir('claude'),
+        '`capability state --runtime claude` must resolve to the Claude config dir, not the persisted codex dir');
+    } finally {
+      cleanup(tmpDir);
+    }
+  });
+
+  // L-2 (review): end-to-end CLI test for loop render-hooks --runtime — the exact
+  // command the bug report calls out as silently no-op'ing. Guards the copy-pasted
+  // arg parsing in gsd-tools.cjs from diverging from the capability-state branch.
+  test('CLI: `loop render-hooks verify:post --runtime claude` resolves against the Claude config dir', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cap-rt-loop-cli-'));
+    try {
+      writePersistedRuntime(tmpDir, 'codex');
+      const result = runGsdTools('loop render-hooks verify:post --runtime claude --raw', tmpDir);
+      assert.ok(result.success, `loop render-hooks --runtime should succeed: ${result.error || ''}`);
+      const parsed = JSON.parse(result.output);
+      // The envelope carries activeHooks/rendered; the key assertion is that it
+      // ran without silently no-op'ing against the codex dir. A non-empty
+      // point + a rendered string (even "_No active hooks..._") proves the
+      // command executed against the resolved (claude) config dir rather than
+      // erroring or emitting nothing.
+      assert.strictEqual(parsed.point, 'verify:post', 'render-hooks must echo the requested point');
+      assert.ok(typeof parsed.rendered === 'string', 'render-hooks must produce a rendered string');
+    } finally {
+      cleanup(tmpDir);
+    }
+  });
+
+  // M-1 + NIT-01 (review): unknown / crafted --runtime values are REJECTED by the
+  // closed-vocabulary canonicalizer, warn, and fall through to the persisted
+  // runtime (never embedded into a path). This is the security-load-bearing
+  // contract — pin it so a future refactor can't silently break it.
+  test('resolveCapabilityRuntimeState: unknown/crafted --runtime is rejected (closed vocabulary), warns, and falls through to persisted runtime', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cap-rt-reject-'));
+    const savedGsdRuntime = process.env.GSD_RUNTIME;
+    delete process.env.GSD_RUNTIME;
+    try {
+      writePersistedRuntime(tmpDir, 'codex');
+      const runtimeHomes = require('../gsd-core/bin/lib/runtime-homes.cjs');
+      const expectedCodexDir = runtimeHomes.getGlobalConfigDir('codex');
+      const crafted = ['../../etc/passwd', '__proto__', 'constructor', '--config-dir', 'garbage', 'foo bar', 'cluade'];
+      for (const bad of crafted) {
+        const result = resolveCapabilityRuntimeState(tmpDir, undefined, undefined, bad);
+        assert.strictEqual(result.runtimeConfigDir, expectedCodexDir,
+          `crafted --runtime "${bad}" must fall through to persisted codex dir, not be embedded in a path`);
+        assert.ok(result.warnings.some((w) => w.includes('--runtime') && w.includes(bad)),
+          `crafted --runtime "${bad}" must emit a warning naming the rejected value`);
+      }
+    } finally {
+      if (savedGsdRuntime === undefined) delete process.env.GSD_RUNTIME;
+      else process.env.GSD_RUNTIME = savedGsdRuntime;
+      cleanup(tmpDir);
+    }
+  });
+
+  // N-1 (review): CLI arg-parsing boundary — --config-dir wins over --runtime
+  // (most-explicit input takes precedence), and missing --runtime value errors.
+  test('CLI: --config-dir takes precedence over --runtime when both are given', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cap-rt-precedence-'));
+    const explicitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cap-rt-explicit-cfg-'));
+    try {
+      writePersistedRuntime(tmpDir, 'codex');
+      const result = runGsdTools(
+        `capability state --config-dir ${explicitDir} --runtime claude --raw`,
+        tmpDir,
+      );
+      assert.ok(result.success, `capability state with both flags should succeed: ${result.error || ''}`);
+      const parsed = JSON.parse(result.output);
+      assert.strictEqual(parsed.runtimeConfigDir, explicitDir,
+        '--config-dir (explicit path) must win over --runtime when both are present');
+    } finally {
+      cleanup(explicitDir);
+      cleanup(tmpDir);
+    }
+  });
+
+  test('CLI: `capability state --runtime` with no value errors with USAGE', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cap-rt-missing-'));
+    try {
+      writePersistedRuntime(tmpDir, 'codex');
+      const result = runGsdTools('capability state --runtime', tmpDir);
+      assert.ok(!result.success, 'missing --runtime value must produce a non-zero exit');
+      assert.ok(/Missing value for --runtime/.test(result.error || ''),
+        `error must name the missing --runtime value: ${result.error || ''}`);
+    } finally {
+      cleanup(tmpDir);
     }
   });
 });
