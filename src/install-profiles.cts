@@ -51,6 +51,7 @@ const PROFILES = Object.freeze({
   standard: Object.freeze([
     // Core loop
     'new-project',
+    'onboard',
     'discuss-phase',
     'plan-phase',
     'execute-phase',
