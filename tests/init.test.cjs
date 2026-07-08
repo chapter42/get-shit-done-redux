@@ -90,6 +90,53 @@ describe('init commands', () => {
     assert.strictEqual(output.uat_path, '.planning/phases/03-api/03-UAT.md');
   });
 
+  // #2056: normalizePhaseName() strips ANY [A-Z][A-Z0-9_]*- prefix as a project
+  // code, so a foreign-prefixed workstream/task id like "MEM-01" collapsed to
+  // "01" and resolved to the unrelated numeric Phase 01. init plan-phase must
+  // require exact prefixed evidence (a phase dir/roadmap entry literally
+  // carrying the foreign prefix) before accepting a numeric-fallback match.
+  test('#2056 — init plan-phase does not collapse foreign-prefixed task IDs into numeric phases', () => {
+    seedPhase(tmpDir, '01-stable-baseline-on-main', {
+      '01-CONTEXT.md': '# Phase Context',
+    });
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'ROADMAP.md'),
+      '# Roadmap\n\n### Phase 1: Stable Baseline On Main\n**Goal:** Establish baseline\n**Plans:** 1 plan\n',
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'config.json'),
+      JSON.stringify({ project_code: 'LKML' }, null, 2),
+    );
+
+    const result = runGsdTools('init plan-phase MEM-01', tmpDir);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.phase_found, false, 'MEM-01 must NOT resolve to numeric Phase 01');
+    assert.strictEqual(output.phase_dir, null);
+    assert.strictEqual(output.phase_number, null);
+  });
+
+  // #2056 companion: the guard must not reject the configured project_code's
+  // OWN prefixed phases — LKML-01 (project_code = LKML) must still resolve.
+  test('#2056 — init plan-phase still resolves configured project-code-prefixed phases', () => {
+    seedPhase(tmpDir, 'LKML-01-stable-baseline-on-main', {
+      'LKML-01-CONTEXT.md': '# Phase Context',
+    });
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'config.json'),
+      JSON.stringify({ project_code: 'LKML' }, null, 2),
+    );
+
+    const result = runGsdTools('init plan-phase LKML-01', tmpDir);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.phase_found, true, 'LKML-01 (own project code) must resolve');
+    assert.strictEqual(output.phase_dir, '.planning/phases/LKML-01-stable-baseline-on-main');
+    assert.strictEqual(output.phase_number, 'LKML-01');
+  });
+
   test('init plan-phase exposes text_mode from config (defaults false)', () => {
     const result = runGsdTools('init plan-phase 03', tmpDir);
     assert.ok(result.success, `Command failed: ${result.error}`);
