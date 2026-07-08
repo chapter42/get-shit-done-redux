@@ -331,6 +331,7 @@ Full roster at `gsd-core/references/*.md`. References are shared knowledge docum
 | `autonomous-smart-discuss.md` | Smart-discuss logic for autonomous mode. |
 | `ios-scaffold.md` | iOS application scaffolding patterns. |
 | `ai-evals.md` | AI evaluation design reference for `/gsd-ai-integration-phase`. |
+| `api-coverage.md` | API-coverage gate reference (full-coverage-by-default) for the `ai-integration` capability's `verify:pre` blocking gate (#1562) — matrix format, trigger, tuning, detector CLI. |
 | `ai-frameworks.md` | AI framework decision-matrix reference for `gsd-framework-selector`. |
 | `executor-examples.md` | Worked examples for the gsd-executor agent. |
 | `doc-conflict-engine.md` | Shared conflict-detection contract for ingest/import workflows. |
@@ -397,6 +398,7 @@ Full listing: `gsd-core/bin/lib/*.cjs`.
 | `active-workstream-store.cjs` | Workstream source precedence and selection (CLI `--ws` > `GSD_WORKSTREAM` env > stored pointer); name validation and environment propagation |
 | `adr-parser.cjs` | ADR decision parser for plan-phase ingest express path; normalizes section synonyms, parses status/decision/scope fences, and enforces status rejection gates |
 | `agent-command-router.cjs` | Thin CJS subcommand router adapter for `gsd-tools agent` |
+| `api-coverage.cjs` | API-coverage detector + matrix validator (#1562) — pure `detectApiIntegration` (compound verb+noun signal + `<Service> API/SDK` surface; strips fenced code) and `validateCoverageMatrix`/`parseCoverageMatrix`/`renderCoverageMatrix` for the COVERAGE.md artifact; STDIN CLI (`echo "$SCOPE" \| node .../api-coverage.cjs [--json]`, exit 0=detected/1=none/2=error); consumed by the `ai-integration` capability's `plan:pre` contribution and blocking `verify:pre` gate (`check api-coverage.verify-pre`) |
 | `artifacts.cjs` | Canonical artifact registry — known `.planning/` root file names; used by `gsd-health` W019 lint |
 | `audit-command-router.cjs` | ADR-959 capability command router for `gsd-tools audit-uat` and `gsd-tools audit-open` — extracted from hardcoded cases in `gsd-tools.cjs`; dispatches to `uat.cjs:cmdAuditUat` and `audit.cjs:{auditOpenArtifacts,formatAuditReport}`; phase 4d-impl-3 |
 | `audit.cjs` | Audit dispatch, audit open sessions, audit storage helpers |
@@ -449,6 +451,7 @@ Full listing: `gsd-core/bin/lib/*.cjs`.
 | `host-integration.cjs` | Host-Integration Interface (ADR-1239 Phase A) — negotiated capability contract over the six host-integration points; `negotiateHostCapabilities` fail-closes on undeclared/unknown/`undocumented` values, typed degradation ladder, host-capability profiles; the 8 `runtime.hostIntegration` axes are validated in `capability-validator.cjs` and sourced per-CLI in `docs/reference/host-integration-capability-matrix.md` |
 | `init-command-router.cjs` | Thin CJS subcommand router adapter for `gsd-tools init` |
 | `init.cjs` | Compound context loading for each workflow type |
+| `install-effort-resolver.cjs` | Install-time effort resolution — `readGsdEffectiveEffortConfig` (merges `~/.gsd/defaults.json` + project `.planning/config.json`) + `resolveInstallTimeEffort`, extracted from `bin/install.js` (#2071) so `gsd-tools effort sync` can require it from the shipped runtime instead of the never-copied package-root installer; install.js imports them back (single source) |
 | `install-engine.cjs` | Runtime-artifact install engine — `installRuntimeArtifacts`/`uninstallRuntimeArtifacts`/`installOpencodeFamilySkills` + their helpers, extracted from `bin/install.js` (ADR-1239 Phase B, #1679); install.js imports them back and injects `getCommitAttribution` |
 | `install-profiles.cjs` | Install profile allowlist + skill staging for `--minimal` install (#2762); single source of truth for which `gsd-*` skills/agents land in runtime config dirs |
 | `installer-migration-authoring.cjs` | Installer migration authoring guardrails for record metadata, explicit scopes, ownership evidence, and runtime contract citations |
