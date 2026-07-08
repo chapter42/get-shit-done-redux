@@ -57,12 +57,17 @@ describe('Antigravity (agy) reviewer invocation in /gsd-review (#2073)', () => {
     );
   });
 
-  test('#2073 mode 3 — invocation is wrapped in an external wall-clock timeout', () => {
+  test('#2073 mode 3 — pairs agy with an external wall-clock killer when available (timeout/gtimeout probe)', () => {
     const block = agyBashBlock();
-    assert.ok(
-      /(^|\s)timeout\s+\d/.test(block),
-      'agy invocation must be wrapped in an external `timeout <secs>` — --print-timeout cannot fire before agy creates a session',
-    );
+    // Capability probe for GNU `timeout` and macOS `gtimeout` (stock macOS has neither).
+    assert.match(block, /command -v timeout/, 'agy block should probe for the `timeout` killer');
+    assert.match(block, /command -v gtimeout/, 'agy block should probe for `gtimeout` (macOS Homebrew)');
+    // The external cap (600s) is >= agy's native --print-timeout (540s) so it only
+    // backstops a pre-session stall, never cuts a healthy run.
+    assert.match(block, /600 agy --print-timeout 540s/, 'external cap (600s) must be >= --print-timeout (540s)');
+    // Graceful fallback when no external killer is available (stock macOS).
+    assert.match(block, /else\n\s*agy --print-timeout 540s/,
+      'agy block must fall back to --print-timeout alone when no external killer is available (macOS)');
   });
 
   test('#2073 mode 3 — stdin is tied to /dev/null (no tty stall)', () => {
@@ -75,8 +80,7 @@ describe('Antigravity (agy) reviewer invocation in /gsd-review (#2073)', () => {
 
   test('#2073 mode 2 — wires review.models.agy via --model when configured', () => {
     const block = agyBashBlock();
-    assert.ok(/--model/.test(block), 'agy block should pass --model when AGY_MODEL is set');
-    assert.ok(/AGY_MODEL/.test(block), 'agy block should reference the AGY_MODEL config variable');
+    assert.match(block, /--model "\$AGY_MODEL"/, 'agy block should pass --model "$AGY_MODEL" when set');
   });
 
   test('#2073 mode 2 — Step 3 stub surfaces a diagnostic from agy cli.log (not just a generic stub)', () => {

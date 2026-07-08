@@ -374,7 +374,7 @@ fi
 
 **Antigravity CLI:**
 
-**Maintainer note — why this block has three layers (last updated against agy 1.0.2):**
+**Maintainer note — why this block has three layers (last updated against agy 1.0.16):**
 
 `agy -p` (the `--print` non-interactive flag) works correctly on macOS and Linux: it sends the
 prompt, receives the model response, and writes it to stdout. On **native Windows** it silently
@@ -440,10 +440,12 @@ fi
 #     for 6 plans + CONTEXT + RESEARCH + REQUIREMENTS) overflows the exec arg list
 #     (`bash: agy: Argument list too long`, rc 126), indistinguishable from a model
 #     failure when stderr is suppressed.
-#   * EXTERNAL `timeout` wrapper — `--print-timeout` is agy's native cap but it
-#     CANNOT fire before agy creates a session; under concurrent heavy runs one
-#     process can stall pre-session (no `brain/<conv-id>/` dir, alive at 583 s
-#     despite `--print-timeout 300s`). The external cap bounds wall-clock regardless.
+#   * EXTERNAL `timeout` wrapper when available (GNU `timeout` / `gtimeout`) —
+#     `--print-timeout` is agy's native cap but it CANNOT fire before agy creates a
+#     session; under concurrent heavy runs one process can stall pre-session (no
+#     `brain/<conv-id>/` dir, alive at 583 s despite `--print-timeout 300s`). The
+#     external cap bounds wall-clock regardless. Stock macOS lacks `timeout`, so
+#     the block probes for it and falls back to --print-timeout alone there.
 #   * `--model` from `review.models.agy` when set — escape hatch for a pinned model
 #     that 404s server-side (exits 0 with empty stdout AND empty transcript).
 #   * stdin tied to /dev/null so agy never blocks on a tty.
@@ -454,7 +456,20 @@ if [ -n "$AGY_MODEL" ] && [ "$AGY_MODEL" != "null" ]; then
 else
   set --
 fi
-timeout 600 agy --print-timeout 540s "$@" -p "Read the file at /tmp/gsd-review-prompt-{phase}.md in full and carry out the review request it contains. Output only the resulting markdown review. Do not edit any files." </dev/null 2>/dev/null > /tmp/gsd-review-antigravity-{phase}.md
+_AGY_PROMPT="Read the file at /tmp/gsd-review-prompt-{phase}.md in full and carry out the review request it contains. Output only the resulting markdown review. Do not edit any files."
+# Capability-probe an external wall-clock killer (GNU coreutils `timeout` or the
+# macOS Homebrew `gtimeout`). Stock macOS ships NEITHER — a bare `timeout …` would
+# fail with rc 127 ("command not found") and silently lose the reviewer, so fall
+# back to agy's native --print-timeout alone in that case. The external cap, when
+# available, is set HIGHER than --print-timeout so it only backstops a pre-session
+# stall (which --print-timeout cannot bound — #2073 mode 3) and never pre-empts a
+# healthy run. Mirrors the probe in scripts/base64-scan.sh.
+_AGY_KILLER="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
+if [ -n "$_AGY_KILLER" ]; then
+  "$_AGY_KILLER" 600 agy --print-timeout 540s "$@" -p "$_AGY_PROMPT" </dev/null 2>/dev/null > /tmp/gsd-review-antigravity-{phase}.md
+else
+  agy --print-timeout 540s "$@" -p "$_AGY_PROMPT" </dev/null 2>/dev/null > /tmp/gsd-review-antigravity-{phase}.md
+fi
 _AGY_RC=$?
 if [ "$_AGY_RC" -ne 0 ]; then
   : > /tmp/gsd-review-antigravity-{phase}.md

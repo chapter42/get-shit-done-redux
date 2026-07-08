@@ -188,30 +188,35 @@ describe('bug #687 → #2073: agy print mode bounded by --print-timeout PAIRED w
   //     the exec arg list on a large review prompt (Linux MAX_ARG_STRLEN
   //     128 KB/single-arg → rc 126).
 
-  test('invokes agy with --print-timeout AND a paired external timeout', () => {
+  test('invokes agy with --print-timeout AND a paired external killer when available', () => {
     const c = read();
     assert.match(c, /--print-timeout \d+s?/, 'review.md must pass agy its native --print-timeout');
-    // External `timeout <secs> agy …` — the paired backstop per agy guidance.
-    assert.match(c, /(^|\s)timeout\s+\d+\s+agy\b/,
-      'review.md must wrap agy in an external `timeout <secs> agy` (agy guidance pairs --print-timeout with a terminal timeout)');
+    // Capability probe for GNU `timeout` / macOS `gtimeout` (stock macOS has neither).
+    assert.match(c, /command -v timeout/, 'review.md must probe for the `timeout` killer');
+    assert.match(c, /command -v gtimeout/, 'review.md must probe for `gtimeout` (macOS Homebrew)');
+    // The external cap (600s) is applied ahead of agy and is >= --print-timeout (540s).
+    assert.match(c, /600 agy --print-timeout 540s/,
+      'review.md must pair an external cap (600s) >= --print-timeout (540s) with agy (agy guidance)');
   });
 
-  test('external timeout is >= --print-timeout so it never cuts a healthy run', () => {
+  test('external cap is >= --print-timeout, and falls back to bare agy on macOS', () => {
     const c = read();
-    const external = c.match(/timeout\s+(\d+)\s+agy\b/);
-    const native = c.match(/--print-timeout\s+(\d+)s/);
-    assert.ok(external && native, 'both the external timeout and --print-timeout must be present');
+    const bound = c.match(/(\d+)\s+agy --print-timeout (\d+)s/);
+    assert.ok(bound, 'review.md must encode the external-cap + --print-timeout pair');
     assert.ok(
-      Number(external[1]) >= Number(native[1]),
-      'external `timeout` (seconds) must be >= --print-timeout (seconds) so it only backstops a stall',
+      Number(bound[1]) >= Number(bound[2]),
+      'external cap (seconds) must be >= --print-timeout (seconds) so it only backstops a stall',
     );
+    // Graceful fallback when no external killer is available (stock macOS).
+    assert.match(c, /else\n\s*agy --print-timeout/,
+      'review.md must fall back to --print-timeout alone when no external killer is available (macOS)');
   });
 
   test('uses a file-reference prompt, not inline "$(cat …)" (arg-list overflow, #2073)', () => {
     const c = read();
     assert.doesNotMatch(c, /agy[^\n]*-p "\$\(cat/,
       'review.md must not feed agy the prompt inline via "$(cat …)" — a large review prompt overflows the exec arg list (rc 126)');
-    assert.match(c, /agy[^\n]*-p "Read the file at \/tmp\/gsd-review-prompt-/,
+    assert.match(c, /Read the file at \/tmp\/gsd-review-prompt-/,
       'review.md should pass agy a file-reference prompt (mirrors the Cursor block)');
   });
 
