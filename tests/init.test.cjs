@@ -137,6 +137,46 @@ describe('init commands', () => {
     assert.strictEqual(output.phase_number, 'LKML-01');
   });
 
+  // #2056 accept-branch: a foreign-prefixed query MUST still resolve when a phase
+  // directory literally carries that prefix (e.g. a real MEM-01-* workstream
+  // phase). Proves the guard accepts exact-prefixed evidence, not just rejects.
+  test('#2056 — init plan-phase resolves a real foreign-prefixed phase dir', () => {
+    seedPhase(tmpDir, 'MEM-01-integration', {
+      'MEM-01-CONTEXT.md': '# Phase Context',
+    });
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'config.json'),
+      JSON.stringify({ project_code: 'LKML' }, null, 2),
+    );
+
+    const result = runGsdTools('init plan-phase MEM-01', tmpDir);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.phase_found, true, 'a real MEM-01-* dir must resolve under its own prefix');
+    assert.strictEqual(output.phase_dir, '.planning/phases/MEM-01-integration');
+    assert.strictEqual(output.phase_number, 'MEM-01');
+  });
+
+  // #2056 edge: with NO project_code configured, any prefixed query is foreign
+  // and must NOT collapse to a numeric phase. Pins the strict default.
+  test('#2056 — init plan-phase treats prefixed queries as foreign when no project_code is configured', () => {
+    seedPhase(tmpDir, '01-stable-baseline-on-main', {
+      '01-CONTEXT.md': '# Phase Context',
+    });
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'config.json'),
+      JSON.stringify({}, null, 2),
+    );
+
+    const result = runGsdTools('init plan-phase MEM-01', tmpDir);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.phase_found, false, 'with no project_code, MEM-01 must not resolve to numeric Phase 01');
+    assert.strictEqual(output.phase_number, null);
+  });
+
   test('init plan-phase exposes text_mode from config (defaults false)', () => {
     const result = runGsdTools('init plan-phase 03', tmpDir);
     assert.ok(result.success, `Command failed: ${result.error}`);
