@@ -1,4 +1,4 @@
-// allow-test-rule: source-text-is-the-product
+// allow-test-rule: source-text-is-the-product (see #2073)
 // gsd-core/workflows/review.md is a workflow document whose bash blocks ARE
 // what /gsd-review loads and executes at runtime. Asserting the Antigravity
 // invocation shape asserts the deployed contract — this is behavioral coverage
