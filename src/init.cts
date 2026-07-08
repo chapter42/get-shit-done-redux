@@ -73,7 +73,7 @@ const {
   extractCurrentMilestone,
 } = roadmapParser;
 const { pathExistsInternal, generateSlugInternal, toPosixPath } = coreUtils;
-const { normalizePhaseName, phaseTokenMatches, stripProjectCodePrefix } = phaseId;
+const { escapeRegex, normalizePhaseName, phaseTokenMatches, stripProjectCodePrefix } = phaseId;
 const { pruneOrphanedWorktrees } = worktreeSafety;
 
 const {
@@ -95,6 +95,44 @@ void stripShippedMilestones;
 
 // Accept all bold/colon variants of the Requirements header (#2769)
 const REQUIREMENTS_HEADER_RE = /^\*\*Requirements:?\*\*[^\S\n]*:?[^\S\n]*([^\n]*)$/m;
+
+// #2056: normalizePhaseName() strips ANY [A-Z][A-Z0-9_]*- prefix as a project
+// code (e.g. 'MEM-01' → '01'), so a foreign-prefixed workstream/task id would
+// collapse to its numeric suffix and resolve to an unrelated numeric phase via
+// the dir/roadmap fallback. init plan-phase must require EXACT prefixed
+// evidence — a phase dir whose token literally IS the prefixed query, or a
+// roadmap entry literally headed with it — before accepting such a match. The
+// configured project_code's own prefix (e.g. LKML-01 under project_code: LKML)
+// is never foreign and always passes through.
+function parsePhasePrefix(phase: unknown): string | null {
+  const match = String(phase).match(/^([A-Z][A-Z0-9_]*)-(?=\d)/i);
+  return match ? match[1] : null;
+}
+
+function isForeignPrefixedPhaseQuery(phase: unknown, projectCode: unknown): boolean {
+  const prefix = parsePhasePrefix(phase);
+  if (!prefix) return false;
+  const configured = typeof projectCode === 'string' ? projectCode.trim() : '';
+  return !configured || prefix.toUpperCase() !== configured.toUpperCase();
+}
+
+function phaseInfoMatchesExactPrefix(
+  phaseInfo: Record<string, unknown> | null,
+  phase: string,
+): boolean {
+  const num = phaseInfo?.['phase_number'];
+  const numStr = typeof num === 'string' ? num : (typeof num === 'number' ? String(num) : '');
+  return numStr.toUpperCase() === phase.toUpperCase();
+}
+
+function roadmapPhaseMatchesExactPrefix(
+  roadmapPhase: Record<string, unknown> | null,
+  phase: string,
+): boolean {
+  const sectionRaw = roadmapPhase?.['section'];
+  const section = typeof sectionRaw === 'string' ? sectionRaw : '';
+  return new RegExp(`^#{2,4}\\s*Phase\\s+${escapeRegex(phase)}(?:\\b|\\s|:)`, 'i').test(section);
+}
 
 function listPhaseSummaryFiles(phaseDir: string): string[] {
   return (scanPhasePlans(phaseDir) as unknown as Record<string, string[]>)['summaryFiles'];
@@ -430,9 +468,19 @@ function cmdInitPlanPhase(
   }
 
   const config = loadConfig(cwd);
+  const foreignPrefixedPhase = isForeignPrefixedPhaseQuery(phase, config.project_code);
   let phaseInfo = findPhaseInternal(cwd, phase) as unknown as Record<string, unknown> | null;
+  // #2056: a foreign-prefixed query must only match a phase whose token literally
+  // IS the prefixed query (e.g. a real 'MEM-01-*' dir); otherwise the numeric
+  // fallback ('MEM-01' → '01') would resolve to the unrelated numeric phase.
+  if (foreignPrefixedPhase && !phaseInfoMatchesExactPrefix(phaseInfo, phase)) {
+    phaseInfo = null;
+  }
 
-  const roadmapPhase = getRoadmapPhaseInternal(cwd, phase) as unknown as Record<string, unknown> | null;
+  let roadmapPhase = getRoadmapPhaseInternal(cwd, phase) as unknown as Record<string, unknown> | null;
+  if (foreignPrefixedPhase && !roadmapPhaseMatchesExactPrefix(roadmapPhase, phase)) {
+    roadmapPhase = null;
+  }
 
   if (phaseInfo?.['archived'] && roadmapPhase?.['found']) {
     phaseInfo = null;
