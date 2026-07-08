@@ -80,7 +80,9 @@ const PKG_VERSION = require('../package.json').version;
 // (install-minimal-hooks, sh-hook-paths, codex-config, etc.). Matched by basename.
 // settings.json = Claude/Antigravity/Augment/etc. hook surface; hooks.json =
 // Codex/Cursor hook surface — both embed the platform-varying node-runner command.
-const HOOK_CONFIG_FILES = new Set(['settings.json', 'hooks.json']);
+// settings.local.json = Claude LOCAL hook surface (#338): same platform-varying
+// node-runner command as settings.json, so excluded for the same reason (#2086).
+const HOOK_CONFIG_FILES = new Set(['settings.json', 'settings.local.json', 'hooks.json']);
 
 // Path prefixes excluded from the parity manifest. `gsd-core/bin/lib/` holds the
 // tsc-built runtime artifacts (compiled from src/*.cts) that the install COPIES
@@ -194,3 +196,53 @@ for (const runtime of runtimes) {
     }
   });
 }
+
+// #2086 (EoS/claude): claude is the reference host and the ONLY runtime with a
+// distinct LOCAL "legacy flat-commands" layout (commands/gsd-*.md + agents/gsd-*.md).
+// The loop above asserts the GLOBAL skills layout; this asserts the LOCAL
+// commands/agents layout is byte-identical too, so folding claude's
+// `runtime === 'claude'` branches into descriptor-driven hostBehaviors cannot
+// silently change the local install output (AC1: "both scopes"). NOTE: the
+// settings.local.json ROUTING itself is excluded here (platform-varying node-runner
+// path) — that dimension is covered directly by install.test.cjs's #338 suite.
+test('golden parity — claude (local legacy layout)', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('install output is platform-specific on Windows (backslash paths); parity is asserted on macOS + Linux');
+    return;
+  }
+  const { configDir, root } = runMinimalInstall({ runtime: 'claude', scope: 'local' });
+  let actual;
+  try {
+    actual = buildParityManifest(configDir, root);
+  } finally {
+    cleanup(root);
+  }
+
+  const fixturePath = path.join(FIXTURE_DIR, 'claude-local.json');
+
+  if (UPDATE) {
+    fs.writeFileSync(fixturePath, JSON.stringify(actual, null, 2) + '\n', 'utf8');
+    process.stdout.write(`  [UPDATE] claude-local: wrote ${Object.keys(actual).length} file hashes → ${fixturePath}\n`);
+    return;
+  }
+
+  if (!fs.existsSync(fixturePath)) {
+    assert.fail(
+      `Golden fixture missing for claude-local: ${fixturePath}\n` +
+      'Run UPDATE_GOLDEN=1 node --test tests/golden-install-parity.test.cjs to capture.',
+    );
+  }
+
+  const golden = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
+  const added   = Object.keys(actual).filter(k => !(k in golden));
+  const removed = Object.keys(golden).filter(k => !(k in actual));
+  const changed = Object.keys(actual).filter(k => k in golden && actual[k] !== golden[k]);
+  if (added.length || removed.length || changed.length) {
+    const lines = ['Parity mismatch for claude-local:'];
+    if (added.length)   lines.push(`  added   (${added.length}): ${added.join(', ')}`);
+    if (removed.length) lines.push(`  removed (${removed.length}): ${removed.join(', ')}`);
+    if (changed.length) lines.push(`  changed (${changed.length}): ${changed.join(', ')}`);
+    lines.push('Run UPDATE_GOLDEN=1 to recapture if the change is intentional.');
+    assert.deepEqual(actual, golden, lines.join('\n'));
+  }
+});
