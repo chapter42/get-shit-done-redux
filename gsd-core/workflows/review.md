@@ -234,7 +234,8 @@ GEMINI_MODEL=$(gsd_run query config-get review.models.gemini 2>/dev/null | jq -r
 CLAUDE_MODEL=$(gsd_run query config-get review.models.claude 2>/dev/null | jq -r '.' 2>/dev/null || true)
 CODEX_MODEL=$(gsd_run query config-get review.models.codex 2>/dev/null | jq -r '.' 2>/dev/null || true)
 OPENCODE_MODEL=$(gsd_run query config-get review.models.opencode 2>/dev/null | jq -r '.' 2>/dev/null || true)
-# review.models.agy is reserved for future model-pinning support; agy selects its model internally
+# review.models.agy, when set, is passed to agy as --model (escape hatch for a
+# pinned model that 404s server-side); otherwise agy uses its persisted default.
 AGY_MODEL=$(gsd_run query config-get review.models.agy 2>/dev/null | jq -r '.' 2>/dev/null || true)
 
 # #1115: `--dangerously-bypass-hook-trust` only exists on codex-cli >= 0.137.0.
@@ -408,7 +409,9 @@ and Step 3 fires with a clear error message in REVIEWS.md. No silent corruption.
 Invocation specifics (verified agy 1.0.0, macOS arm64 and Linux amd64):
 - `-p` takes the prompt as a **flag value** — `echo X | agy -p` errors with "flag needs an argument: -p"
 - `--print-timeout` defaults to 5m, aligning with this workflow's global timeout
-- No `-m` / `--model` flag — agy selects the model internally
+- `--model "<name>"` selects the model (available since agy ~1.0.3; `agy models` lists
+  them). When `review.models.agy` is set it is passed as `--model`; otherwise agy uses
+  its persisted default (`agy models`).
 
 ```bash
 # Pre-flight: snapshot the transcript watermark before invoking agy.
@@ -432,14 +435,26 @@ if [ -f "$_AGY_CACHE" ]; then
 fi
 
 # Step 1 — primary invocation: stdout works on macOS, Linux, and WSL.
-# Bound the run with agy's OWN `--print-timeout` (issue #687). On a large,
-# file-path-rich prompt agy's agentic Cascade can loop on its code_search/grep
-# steps and never converge; `--print-timeout` is agy's native cap for print mode
-# (defaults to 5m — see maintainer note above), so we pass it explicitly to let a
-# stalled run self-terminate through the tool's own mechanism. A non-zero exit
-# (timeout or crash) discards any partial output so the Step 2 transcript fallback
-# / Step 3 stub take over.
-agy --print-timeout 300s -p "$(cat /tmp/gsd-review-prompt-{phase}.md)" 2>/dev/null > /tmp/gsd-review-antigravity-{phase}.md
+# Three hardening invariants (#2073), all mirroring the Cursor block's discipline:
+#   * FILE-REFERENCE prompt (not inline `$(cat …)`) — a large review prompt (≈197 KB
+#     for 6 plans + CONTEXT + RESEARCH + REQUIREMENTS) overflows the exec arg list
+#     (`bash: agy: Argument list too long`, rc 126), indistinguishable from a model
+#     failure when stderr is suppressed.
+#   * EXTERNAL `timeout` wrapper — `--print-timeout` is agy's native cap but it
+#     CANNOT fire before agy creates a session; under concurrent heavy runs one
+#     process can stall pre-session (no `brain/<conv-id>/` dir, alive at 583 s
+#     despite `--print-timeout 300s`). The external cap bounds wall-clock regardless.
+#   * `--model` from `review.models.agy` when set — escape hatch for a pinned model
+#     that 404s server-side (exits 0 with empty stdout AND empty transcript).
+#   * stdin tied to /dev/null so agy never blocks on a tty.
+# A non-zero exit (external timeout = 124, crash, etc.) discards any partial output
+# so the Step 2 transcript fallback / Step 3 diagnostic take over.
+if [ -n "$AGY_MODEL" ] && [ "$AGY_MODEL" != "null" ]; then
+  set -- --model "$AGY_MODEL"
+else
+  set --
+fi
+timeout 600 agy --print-timeout 540s "$@" -p "Read the file at /tmp/gsd-review-prompt-{phase}.md in full and carry out the review request it contains. Output only the resulting markdown review. Do not edit any files." </dev/null 2>/dev/null > /tmp/gsd-review-antigravity-{phase}.md
 _AGY_RC=$?
 if [ "$_AGY_RC" -ne 0 ]; then
   : > /tmp/gsd-review-antigravity-{phase}.md
@@ -473,9 +488,25 @@ if [ ! -s /tmp/gsd-review-antigravity-{phase}.md ]; then
   fi
 fi
 
-# Step 3 — final guard: both approaches yielded nothing (auth error, first-run setup, path schema changed, etc.)
+# Step 3 — final guard: both approaches yielded nothing (auth error, first-run setup,
+# path schema changed, 404'd pinned model, pre-session stall, etc.)
 if [ ! -s /tmp/gsd-review-antigravity-{phase}.md ]; then
-  echo "Antigravity review failed or returned empty output." > /tmp/gsd-review-antigravity-{phase}.md
+  {
+    echo "Antigravity review failed or returned empty output."
+    # #2073 mode 2: a pinned model that 404s exits 0 with empty stdout AND an empty
+    # transcript — the only evidence is in agy's own log. Surface it instead of a
+    # bare generic stub so the failure is diagnosable.
+    _AGY_LOG="$HOME/.gemini/antigravity-cli/cli.log"
+    if [ -f "$_AGY_LOG" ]; then
+      _AGY_ERR=$(grep -iE 'agent executor error|NOT_FOUND|Publisher model' "$_AGY_LOG" | tail -3)
+      if [ -n "$_AGY_ERR" ]; then
+        echo "agy log hint (pinned model may be unavailable — run 'agy models' and set review.models.agy):"
+        echo "$_AGY_ERR"
+      fi
+    fi
+    # #2073 mode 3: pre-session stall tell — no new conversation dir appeared.
+    echo "If no agy run started, that is the pre-session-stall case: check whether a new ~/.gemini/antigravity-cli/brain/<conv-id>/ dir appeared within ~30s of launch."
+  } > /tmp/gsd-review-antigravity-{phase}.md
 fi
 ```
 
