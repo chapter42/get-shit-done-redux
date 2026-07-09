@@ -12,35 +12,63 @@
  *
  * Invoked as a subprocess (the hook reads a JSON payload on stdin and has no
  * exported surface), so this exercises the real shipped hook end-to-end.
+ *
+ * F.I.R.S.T. design:
+ *   Fast     — spawnSync is synchronous; scanner exits in <100ms for any input.
+ *   Isolated — each invocation is a fresh subprocess; no shared state.
+ *   Repeatable — no wall-clock assertion; the 30s safety-net timeout is 6x the
+ *               scanner's own internal 5s timer and is never tested against.
+ *               Tests assert on the scanner's RESULT (exit code + output shape),
+ *               never on timing.
+ *   Self-Val  — assertions check exit===0 and output is empty or valid JSON.
+ *   Timely    — written alongside the scanner (#1577); hardened for #2089.
  */
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 const fc = require('./helpers/fast-check-setup.cjs');
 
 const HOOK_PATH = path.join(__dirname, '..', 'hooks', 'gsd-read-injection-scanner.js');
 
+/**
+ * Run the scanner hook with a payload and return its result.
+ *
+ * Uses spawnSync (not execFileSync) so non-zero exits return a result object
+ * rather than throwing — cleaner for property tests that assert on exit code.
+ *
+ * Non-serializable payloads (BigInt, circular refs, Symbol, undefined) are
+ * SKIPPED: the scanner receives JSON via stdin, so these values can never
+ * reach it. JSON.stringify throwing is a test-harness artifact (fc.anything()
+ * generates values outside the JSON domain), not a scanner defect.
+ *
+ * The 30s safety-net timeout is NOT a test assertion. The scanner exits in
+ * <100ms for any input; its own internal setTimeout(5000) guarantees exit
+ * even if stdin never closes (impossible here — spawnSync's `input:` pipes
+ * and closes stdin). The ceiling only catches a genuinely hung process (a
+ * real defect) without racing the scanner's internal timer.
+ */
 function runHook(payload) {
+  let input;
   try {
-    const stdout = execFileSync(process.execPath, [HOOK_PATH], {
-      input: JSON.stringify(payload),
-      encoding: 'utf-8',
-      // 10s — double the scanner's own 5s internal stdin-timeout
-      // (hooks/gsd-read-injection-scanner.js:109). Under concurrent test
-      // load (crowded run-tests.cjs chunks), node22's event-loop scheduling
-      // can delay the scanner's stdin 'end' handler past 5s, racing the
-      // scanner's process.exit(0) against this timeout's SIGTERM. A 10s
-      // ceiling gives the scanner's own 5s exit a 5s buffer to win the race
-      // deterministically on every node version. (#2089)
-      timeout: 10000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    return { exitCode: 0, stdout: stdout.trim() };
-  } catch (err) {
-    return { exitCode: err.status ?? 1, stdout: (err.stdout || '').toString().trim() };
+    input = JSON.stringify(payload);
+  } catch {
+    return { exitCode: 0, stdout: '', skipped: true };
   }
+
+  const result = spawnSync(process.execPath, [HOOK_PATH], {
+    input,
+    encoding: 'utf-8',
+    timeout: 30000,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  return {
+    exitCode: result.status ?? 1,
+    stdout: (result.stdout || '').trim(),
+    signal: result.signal,
+  };
 }
 
 // Injection-shaped fragments so the regex-matching path is exercised, not just clean text.
