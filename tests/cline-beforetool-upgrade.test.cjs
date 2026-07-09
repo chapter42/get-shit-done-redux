@@ -61,7 +61,6 @@ test('PLANNING_PATH_PATTERN matches .planning/ paths on posix + windows separato
 });
 
 test('PLANNING_PATH_PATTERN does NOT match non-planning paths', () => {
-  const other = ['src/planning-utils.ts', 'docs/plan.md', '.planning-readme.txt'];
   // .planning-readme.txt must not match (boundary after .planning required)
   for (const p of ['src/planning-utils.ts', 'docs/plan.md']) {
     assert.ok(!PLANNING_PATH_PATTERN.test(p), `non-planning path must NOT match: ${p}`);

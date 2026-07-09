@@ -111,7 +111,7 @@ function collectPathValues(root: unknown): string[] {
 function resolveToolName(tool: BeforeToolPayload['tool']): string {
   if (!tool) return '';
   if (typeof tool === 'string') return tool;
-  const name = (tool as { name?: unknown }).name;
+  const name = tool.name;
   return typeof name === 'string' ? name : '';
 }
 

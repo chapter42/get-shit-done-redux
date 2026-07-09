@@ -28,7 +28,6 @@ const { createImperativeAdapter } = require('../gsd-core/bin/lib/adapter-imperat
 const {
   profileOf,
   negotiateHostCapabilities,
-  shouldFlattenDispatch,
   PROFILE_BASELINES,
   UNDOCUMENTED,
 } = require('../gsd-core/bin/lib/host-integration.cjs');
