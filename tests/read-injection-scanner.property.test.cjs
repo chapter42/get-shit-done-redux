@@ -27,7 +27,14 @@ function runHook(payload) {
     const stdout = execFileSync(process.execPath, [HOOK_PATH], {
       input: JSON.stringify(payload),
       encoding: 'utf-8',
-      timeout: 5000,
+      // 10s — double the scanner's own 5s internal stdin-timeout
+      // (hooks/gsd-read-injection-scanner.js:109). Under concurrent test
+      // load (crowded run-tests.cjs chunks), node22's event-loop scheduling
+      // can delay the scanner's stdin 'end' handler past 5s, racing the
+      // scanner's process.exit(0) against this timeout's SIGTERM. A 10s
+      // ceiling gives the scanner's own 5s exit a 5s buffer to win the race
+      // deterministically on every node version. (#2089)
+      timeout: 10000,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     return { exitCode: 0, stdout: stdout.trim() };
