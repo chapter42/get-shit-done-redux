@@ -114,68 +114,60 @@ test('all 6 hook scripts exist under hooks/', () => {
 test('reconcileCursorHooksJson writes all 6 managed events into hooks.json', (t) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-cursor-hook-bus-'));
   t.after(() => cleanup(tmpDir));
-  try {
-    const hooksJsonPath = path.join(tmpDir, 'hooks.json');
-    const managedEntries = {};
-    for (const ev of EXPECTED_EVENTS) {
-      managedEntries[ev] = {
-        type: 'command',
-        command: `node /fake/${ev}.js`,
-        [GSD_CURSOR_HOOK_MARKER]: true,
-      };
-    }
-    const result = reconcileCursorHooksJson(hooksJsonPath, managedEntries);
-    assert.ok(result.changed, 'first write must report changed=true');
+  const hooksJsonPath = path.join(tmpDir, 'hooks.json');
+  const managedEntries = {};
+  for (const ev of EXPECTED_EVENTS) {
+    managedEntries[ev] = {
+      type: 'command',
+      command: `node /fake/${ev}.js`,
+      [GSD_CURSOR_HOOK_MARKER]: true,
+    };
+  }
+  const result = reconcileCursorHooksJson(hooksJsonPath, managedEntries);
+  assert.ok(result.changed, 'first write must report changed=true');
 
-    const written = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
-    const hookTable = written.hooks;
-    assert.ok(hookTable && typeof hookTable === 'object');
-    for (const ev of EXPECTED_EVENTS) {
-      assert.ok(Array.isArray(hookTable[ev]),
-        `hooks.json must have a ${ev} array`);
-      assert.equal(hookTable[ev].length, 1,
-        `${ev} must have exactly 1 managed entry`);
-      assert.equal(hookTable[ev][0][GSD_CURSOR_HOOK_MARKER], true,
-        `${ev} entry must carry the GSD managed marker`);
-    }
-  } finally {
-    cleanup(tmpDir);
+  const written = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
+  const hookTable = written.hooks;
+  assert.ok(hookTable && typeof hookTable === 'object');
+  for (const ev of EXPECTED_EVENTS) {
+    assert.ok(Array.isArray(hookTable[ev]),
+      `hooks.json must have a ${ev} array`);
+    assert.equal(hookTable[ev].length, 1,
+      `${ev} must have exactly 1 managed entry`);
+    assert.equal(hookTable[ev][0][GSD_CURSOR_HOOK_MARKER], true,
+      `${ev} entry must carry the GSD managed marker`);
   }
 });
 
 test('reconcileCursorHooksJson preserves user entries across all 6 events', (t) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-cursor-hook-bus-'));
   t.after(() => cleanup(tmpDir));
-  try {
-    const hooksJsonPath = path.join(tmpDir, 'hooks.json');
-    // Seed with user-owned entries in two events.
-    const seed = {
-      version: 1,
-      hooks: {
-        sessionStart: [{ type: 'command', command: 'user-start.sh' }],
-        preToolUse: [{ type: 'command', command: 'user-pre.sh' }],
-      },
+  const hooksJsonPath = path.join(tmpDir, 'hooks.json');
+  // Seed with user-owned entries in two events.
+  const seed = {
+    version: 1,
+    hooks: {
+      sessionStart: [{ type: 'command', command: 'user-start.sh' }],
+      preToolUse: [{ type: 'command', command: 'user-pre.sh' }],
+    },
+  };
+  fs.writeFileSync(hooksJsonPath, JSON.stringify(seed, null, 2) + '\n');
+
+  const managedEntries = {};
+  for (const ev of EXPECTED_EVENTS) {
+    managedEntries[ev] = {
+      type: 'command',
+      command: `node /gsd/${ev}.js`,
+      [GSD_CURSOR_HOOK_MARKER]: true,
     };
-    fs.writeFileSync(hooksJsonPath, JSON.stringify(seed, null, 2) + '\n');
-
-    const managedEntries = {};
-    for (const ev of EXPECTED_EVENTS) {
-      managedEntries[ev] = {
-        type: 'command',
-        command: `node /gsd/${ev}.js`,
-        [GSD_CURSOR_HOOK_MARKER]: true,
-      };
-    }
-    reconcileCursorHooksJson(hooksJsonPath, managedEntries);
-
-    const written = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
-    // sessionStart: 1 user + 1 managed
-    assert.equal(written.hooks.sessionStart.length, 2);
-    // preToolUse: 1 user + 1 managed
-    assert.equal(written.hooks.preToolUse.length, 2);
-    // postToolUse: 1 managed only
-    assert.equal(written.hooks.postToolUse.length, 1);
-  } finally {
-    cleanup(tmpDir);
   }
+  reconcileCursorHooksJson(hooksJsonPath, managedEntries);
+
+  const written = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
+  // sessionStart: 1 user + 1 managed
+  assert.equal(written.hooks.sessionStart.length, 2);
+  // preToolUse: 1 user + 1 managed
+  assert.equal(written.hooks.preToolUse.length, 2);
+  // postToolUse: 1 managed only
+  assert.equal(written.hooks.postToolUse.length, 1);
 });

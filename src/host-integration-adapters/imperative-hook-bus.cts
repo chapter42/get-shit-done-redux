@@ -73,7 +73,9 @@ export const GSD_HOOK_MARKER = 'gsd-managed';
  * (backward-compat for descriptors predating #2089).
  *
  * Pure: no I/O, never throws. Unknown event names are silently filtered
- * (fail-closed — an unrecognized event is never registered).
+ * (fail-closed — an unrecognized event is never registered). Falls back to
+ * the full CURSOR_HOOK_EVENTS set when the descriptor is absent or all entries
+ * are unrecognized (ensures the portable-event floor is always covered).
  *
  * @param managedHookEvents - the descriptor's `hostBehaviors.managedHookEvents` array
  * @returns a deduplicated, validated array of event names

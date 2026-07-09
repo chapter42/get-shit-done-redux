@@ -118,7 +118,7 @@ test('no `runtime === "cursor"` string-equality branch remains in the install so
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/\/\/[^\r\n]*/g, '')
     .replace(/`[^`]*`/g, '');
-  for (const rel of ['bin/install.js', 'src/install-engine.cts', 'src/runtime-artifact-conversion.cts']) {
+  for (const rel of ['bin/install.js', 'src/install-engine.cts', 'src/runtime-artifact-conversion.cts', 'src/runtime-hooks-surface.cts']) {
     const src = fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
     const offenders = strip(src).match(/runtime\s*[!=]==\s*'cursor'/g) || [];
     assert.deepEqual(offenders, [], `AC2: no hardcoded runtime==='cursor' branch may remain in ${rel}; found: ${offenders.join(', ')}`);

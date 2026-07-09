@@ -10004,7 +10004,9 @@ function install(isGlobal, runtime = DEFAULT_RUNTIME, options = {}) {
     // adapter. Registers all 6 managed events (sessionStart, postToolUse, preToolUse,
     // stop, subagentStart, subagentStop) via runtime-hooks-surface.cts, which reads
     // the event list from the descriptor-driven adapter module.
-    const cursorHookResult = writeCursorHooksJson(targetDir, src, {});
+    const cursorHookResult = writeCursorHooksJson(targetDir, src, {
+      managedHookEvents: _hostBehaviors(runtime).managedHookEvents,
+    });
     if (cursorHookResult.changed) {
       console.log(`  ${green}✓${reset} Configured Cursor lifecycle hooks (sessionStart, postToolUse, preToolUse, stop, subagentStart, subagentStop)`);
     } else {
