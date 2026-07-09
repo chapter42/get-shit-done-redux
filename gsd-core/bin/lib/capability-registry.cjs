@@ -814,7 +814,8 @@ const capabilities = {
             "prefix": "gsd-",
             "nesting": "flat",
             "recursive": false,
-            "converter": "convertClaudeCommandToCodexSkill"
+            "converter": "convertClaudeCommandToCodexSkill",
+            "home": ".agents"
           }
         ],
         "local": [
@@ -824,7 +825,8 @@ const capabilities = {
             "prefix": "gsd-",
             "nesting": "flat",
             "recursive": false,
-            "converter": "convertClaudeCommandToCodexSkill"
+            "converter": "convertClaudeCommandToCodexSkill",
+            "home": ".agents"
           }
         ]
       },
@@ -836,7 +838,11 @@ const capabilities = {
       "installSurface": "codex-toml",
       "writesSharedSettings": false,
       "permissionWriter": null,
-      "extendedHookEvents": [],
+      "extendedHookEvents": [
+        "SubagentStop",
+        "Stop",
+        "PreCompact"
+      ],
       "hostIntegration": {
         "embeddingMode": "declarative",
         "commandSurface": "slash-file",
@@ -853,6 +859,13 @@ const capabilities = {
         "stateIO": "filesystem",
         "transport": "mcp",
         "runtime": "node"
+      },
+      "hostBehaviors": {
+        "reapplyCommand": "$gsd-update --reapply",
+        "tomlConfigInstall": true,
+        "cleanupSkillSidecars": true,
+        "agentTomlFiles": true,
+        "frontmatterDialect": "codex"
       }
     }
   },
@@ -1046,6 +1059,23 @@ const capabilities = {
         "stateIO": "filesystem",
         "transport": "mcp",
         "runtime": "node"
+      },
+      "hostBehaviors": {
+        "reapplyCommand": "gsd-update --reapply (mention the skill name)",
+        "frontmatterDialect": "cursor",
+        "hooksJsonSurface": true,
+        "skipSharedHooksInstall": true,
+        "reportCommandsDir": true,
+        "skipUpdateBannerCommand": true,
+        "skipSettingsUi": true,
+        "managedHookEvents": [
+          "sessionStart",
+          "postToolUse",
+          "preToolUse",
+          "stop",
+          "subagentStart",
+          "subagentStop"
+        ]
       }
     }
   },
@@ -4134,7 +4164,8 @@ const runtimes = {
             "prefix": "gsd-",
             "nesting": "flat",
             "recursive": false,
-            "converter": "convertClaudeCommandToCodexSkill"
+            "converter": "convertClaudeCommandToCodexSkill",
+            "home": ".agents"
           }
         ],
         "local": [
@@ -4144,7 +4175,8 @@ const runtimes = {
             "prefix": "gsd-",
             "nesting": "flat",
             "recursive": false,
-            "converter": "convertClaudeCommandToCodexSkill"
+            "converter": "convertClaudeCommandToCodexSkill",
+            "home": ".agents"
           }
         ]
       },
@@ -4156,7 +4188,11 @@ const runtimes = {
       "installSurface": "codex-toml",
       "writesSharedSettings": false,
       "permissionWriter": null,
-      "extendedHookEvents": [],
+      "extendedHookEvents": [
+        "SubagentStop",
+        "Stop",
+        "PreCompact"
+      ],
       "hostIntegration": {
         "embeddingMode": "declarative",
         "commandSurface": "slash-file",
@@ -4173,6 +4209,13 @@ const runtimes = {
         "stateIO": "filesystem",
         "transport": "mcp",
         "runtime": "node"
+      },
+      "hostBehaviors": {
+        "reapplyCommand": "$gsd-update --reapply",
+        "tomlConfigInstall": true,
+        "cleanupSkillSidecars": true,
+        "agentTomlFiles": true,
+        "frontmatterDialect": "codex"
       }
     }
   },
@@ -4366,6 +4409,23 @@ const runtimes = {
         "stateIO": "filesystem",
         "transport": "mcp",
         "runtime": "node"
+      },
+      "hostBehaviors": {
+        "reapplyCommand": "gsd-update --reapply (mention the skill name)",
+        "frontmatterDialect": "cursor",
+        "hooksJsonSurface": true,
+        "skipSharedHooksInstall": true,
+        "reportCommandsDir": true,
+        "skipUpdateBannerCommand": true,
+        "skipSettingsUi": true,
+        "managedHookEvents": [
+          "sessionStart",
+          "postToolUse",
+          "preToolUse",
+          "stop",
+          "subagentStart",
+          "subagentStop"
+        ]
       }
     }
   },
