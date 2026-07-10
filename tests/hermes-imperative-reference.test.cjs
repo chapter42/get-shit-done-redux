@@ -22,7 +22,6 @@ const { createImperativeAdapter } = require('../gsd-core/bin/lib/adapter-imperat
 const {
   profileOf,
   negotiateHostCapabilities,
-  shouldFlattenDispatch,
   extensionEventSurfaceFor,
   PROFILE_BASELINES,
   UNDOCUMENTED,
