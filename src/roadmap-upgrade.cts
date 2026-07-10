@@ -23,16 +23,16 @@ const { stripProjectCodePrefix, PHASE_NUMBER_TOKEN_SOURCE } = phaseIdMod;
 // Matches legacy phase headings: ### Phase N: Name  (also decimal: Phase 2.1:)
 // Captures: (hashes)(spaces)(phase-number)(rest-of-line)
 const LEGACY_PHASE_HEADING_RE = new RegExp(
-  `^(#{2,4})\\s*(?:\\[[^\\]]+\\]\\s*)?Phase\\s+(${PHASE_NUMBER_TOKEN_SOURCE})\\s*:(.*)`,
+  `^(#{2,4})\\s*(?:\\[[^\\]]{1,200}\\]\\s*)?Phase\\s+(${PHASE_NUMBER_TOKEN_SOURCE})\\s*:(.*)`,
   'i'
 );
 
 // Matches already-migrated phase headings: ### Phase M-NN: Name
-const MIGRATED_PHASE_HEADING_RE = /^#{2,4}\s*(?:\[[^\]]+\]\s*)?Phase\s+\d+-\d{2}\s*:/i;
+const MIGRATED_PHASE_HEADING_RE = /^#{2,4}\s*(?:\[[^\]]{1,200}\]\s*)?Phase\s+\d+-\d{2}\s*:/i;
 
 // Matches milestone section headings: ## v1.0, ## Roadmap v2.0, ## ✅ v1.0, ## [GSD] v1.0, etc.
 // The optional bracket-token prefix (e.g., [GSD]) must be tested before the emoji group.
-const MILESTONE_HEADING_RE = /^##\s+(?:\[[^\]]+\]\s+|Roadmap\s+|[✅🚧]\s*)?v(\d+)\.(\d+)(?:\s|:)/iu;
+const MILESTONE_HEADING_RE = /^##\s+(?:\[[^\]]{1,200}\]\s+|Roadmap\s+|[✅🚧]\s*)?v(\d+)\.(\d+)(?:\s|:)/iu;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -344,7 +344,7 @@ function computeMigrationPlan(cwd: string, options: Record<string, unknown> = {}
     // Rewrite heading line: "### Phase N: Name" → "### Phase M-NN: Name"
     const oldLine = lines[entry.lineIndex];
     const newLine = oldLine.replace(
-      new RegExp(`^(#{2,4}\\s*(?:\\[[^\\]]+\\]\\s*)?Phase\\s+)${PHASE_NUMBER_TOKEN_SOURCE}(\\s*:)`, 'i'),
+      new RegExp(`^(#{2,4}\\s*(?:\\[[^\\]]{1,200}\\]\\s*)?Phase\\s+)${PHASE_NUMBER_TOKEN_SOURCE}(\\s*:)`, 'i'),
       `$1${mapping.newId}$2`
     );
     if (newLine !== oldLine) {

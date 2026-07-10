@@ -719,7 +719,7 @@ function cmdPhaseAdd(cwd: string, description: string, raw: boolean, customId?: 
       // The lookahead accepts colon, decimal-dot, whitespace, bold-close asterisk,
       // or end-of-line so titleless forms ("- [ ] **Phase 11**", "- [ ] Phase 11")
       // are counted and cannot collide with a freshly-added phase. (#1229)
-      const bulletPattern = /^[ \t]*-[ \t]*\[[^\]]*\][ \t]*\*{0,2}Phase[ \t]+(\d+)(?=[:.\s*]|$)/gim;
+      const bulletPattern = /^[ \t]*-[ \t]*\[[^\]]{0,200}\][ \t]*\*{0,2}Phase[ \t]+(\d+)(?=[:.\s*]|$)/gim;
 
       const usedPhaseNums = new Set<number>();
       let m: RegExpExecArray | null;

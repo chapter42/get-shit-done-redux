@@ -355,8 +355,10 @@ describe('#1729 regression: parenthetical tag before the colon in a phase header
     // still matches (real tags are a handful of chars), 201 does not.
     const phaseId = require('../gsd-core/bin/lib/phase-id.cjs');
     const re = new RegExp(`Phase\\s+0*26${phaseId.OPTIONAL_PHASE_TAG_SOURCE}\\s*:`);
-    assert.ok(re.test(`### Phase 26 (${'x'.repeat(200)}): T`), 'a 200-char tag body is within the bound');
-    assert.ok(!re.test(`### Phase 26 (${'x'.repeat(201)}): T`), 'a 201-char tag body exceeds the bound');
+    // Boundary coverage (CLAUDE.md): limit-1, limit, limit+1.
+    assert.ok(re.test(`### Phase 26 (${'x'.repeat(199)}): T`), 'a 199-char tag body (limit-1) is within the bound');
+    assert.ok(re.test(`### Phase 26 (${'x'.repeat(200)}): T`), 'a 200-char tag body (limit) is within the bound');
+    assert.ok(!re.test(`### Phase 26 (${'x'.repeat(201)}): T`), 'a 201-char tag body (limit+1) exceeds the bound');
     // Linearity guard: the adversarial input that was ~18.8s unbounded resolves
     // near-instantly now. Assert bounded work, not wall-clock (no clock seam):
     // the bounded source contains an explicit upper repetition limit.
@@ -425,11 +427,12 @@ describe('#1729 regression: parenthetical tag before the colon in a phase header
 
   test('the literal enumeration mirror stays equivalent to the exported seam (drift guard)', () => {
     // Resolver sites compose OPTIONAL_PHASE_TAG_SOURCE; literal enumeration sites
-    // inline `(?:\s*\([^)\n]*\))?`. If one is edited without the other the two
-    // header families silently diverge. Assert behavioral equivalence over a
-    // representative header corpus so the split cannot drift undetected.
+    // inline `(?:\s*\([^)\n]{0,200}\))?`. If one is edited without the other the
+    // two header families silently diverge (the body is bounded to {0,200} in
+    // both since #2128 — a ReDoS fix that MUST stay in lockstep). Assert
+    // behavioral equivalence over a representative header corpus.
     const phaseId = require('../gsd-core/bin/lib/phase-id.cjs');
-    const LITERAL_MIRROR = '(?:\\s*\\([^)\\n]*\\))?';
+    const LITERAL_MIRROR = '(?:\\s*\\([^)\\n]{0,200}\\))?';
     const seam = new RegExp(`^Phase\\s+26${phaseId.OPTIONAL_PHASE_TAG_SOURCE}\\s*:`);
     const mirror = new RegExp(`^Phase\\s+26${LITERAL_MIRROR}\\s*:`);
     for (const sample of [

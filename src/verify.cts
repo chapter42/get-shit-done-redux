@@ -1073,7 +1073,7 @@ function checkMilestonePrefixMismatches(
 ): MilestoneMismatch[] {
   const mismatches: MilestoneMismatch[] = [];
   const sections: { version: string; start: number; end: number }[] = [];
-  const sectionRx = /^#{1,3}\s+(?:\[[^\]]+\]\s*)?.*v(\d+\.\d+)/gim;
+  const sectionRx = /^#{1,3}\s+(?:\[[^\]]{1,200}\]\s*)?.*v(\d+\.\d+)/gim;
   let m: RegExpExecArray | null;
   while ((m = sectionRx.exec(roadmapContent)) !== null) {
     if (sections.length > 0) sections[sections.length - 1].end = m.index;
@@ -1082,7 +1082,7 @@ function checkMilestonePrefixMismatches(
   for (const section of sections) {
     const content = roadmapContent.slice(section.start, section.end);
     // #1729: `(?:\s*\([^)\n]{0,200}\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
-    const phaseRx = /#{2,4}\s*(?:\[[^\]]+\]\s*)?Phase\s+([\w][\w.-]*)(?:\s*\([^)\n]{0,200}\))?\s*:/gi;
+    const phaseRx = /#{2,4}\s*(?:\[[^\]]{1,200}\]\s*)?Phase\s+([\w][\w.-]*)(?:\s*\([^)\n]{0,200}\))?\s*:/gi;
     let pm: RegExpExecArray | null;
     while ((pm = phaseRx.exec(content)) !== null) {
       const phaseId = pm[1];
