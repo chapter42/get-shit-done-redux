@@ -2122,14 +2122,14 @@ describe('bug #2114: roadmap get-phase resolves drifted prefixed headings by bar
     assert.strictEqual(payload30.phase_name, 'Plain');
   });
 
-  test('prefixed query surfaces malformed_roadmap when only a checklist entry exists (parity with bare)', () => {
-    // #2121/#2114 route all three resolvers through the shared 3-source lookup, so a
-    // project-code-prefixed query now surfaces the SAME `malformed_roadmap` diagnostic a
-    // bare numeric query always did: a `**Phase PROJ-42:**` summary line with no matching
-    // `### Phase PROJ-42:` detail heading is malformed for BOTH query forms. Before the
-    // consolidation the prefixed form silently returned `{found:false}` with no diagnostic
-    // (the exact-prefix pass discarded its malformed candidate) — this test fails on that
-    // prior behavior and locks the unified, more-informative result.
+  test('project-code-prefixed checklist-only entry surfaces malformed_roadmap for both query forms', () => {
+    // #2121/#2114 route all three resolvers through the shared 3-source lookup. A
+    // `**Phase PROJ-42:**` summary line with no matching `### Phase PROJ-42:` detail heading
+    // is a malformed ROADMAP. Before the consolidation this project-code-prefixed checklist
+    // was reported as a silent `{found:false}` for BOTH query forms — the prefixed pass
+    // discarded its malformed candidate, and the bare pass could not match the `PROJ-` prefix
+    // at all. The unified lookup newly surfaces the malformed_roadmap diagnostic for both, so
+    // this test fails on the prior silent-empty behavior for the prefixed AND the bare form.
     fs.writeFileSync(
       path.join(tmpDir, '.planning', 'ROADMAP.md'),
       [
