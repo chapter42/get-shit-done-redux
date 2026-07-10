@@ -16,13 +16,16 @@ import planningWorkspace = require('./planning-workspace.cjs');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import phaseIdMod = require('./phase-id.cjs');
 const { planningDir } = planningWorkspace;
-const { stripProjectCodePrefix } = phaseIdMod;
+const { stripProjectCodePrefix, PHASE_NUMBER_TOKEN_SOURCE } = phaseIdMod;
 
 // ─── Regex helpers ────────────────────────────────────────────────────────────
 
 // Matches legacy phase headings: ### Phase N: Name  (also decimal: Phase 2.1:)
 // Captures: (hashes)(spaces)(phase-number)(rest-of-line)
-const LEGACY_PHASE_HEADING_RE = /^(#{2,4})\s*(?:\[[^\]]+\]\s*)?Phase\s+(\d+[A-Z]?(?:\.\d+)*)\s*:(.*)/i;
+const LEGACY_PHASE_HEADING_RE = new RegExp(
+  `^(#{2,4})\\s*(?:\\[[^\\]]+\\]\\s*)?Phase\\s+(${PHASE_NUMBER_TOKEN_SOURCE})\\s*:(.*)`,
+  'i'
+);
 
 // Matches already-migrated phase headings: ### Phase M-NN: Name
 const MIGRATED_PHASE_HEADING_RE = /^#{2,4}\s*(?:\[[^\]]+\]\s*)?Phase\s+\d+-\d{2}\s*:/i;
@@ -172,6 +175,7 @@ function extractPhaseNumFromDir(dirName: string): string | null {
   const stripped = stripProjectCodePrefix(dirName);
   // Matches: digits + optional letter + optional decimal suffix, followed by '-' or end.
   // e.g. "02.1-hotfix" → "02.1", "01-setup" → "01"
+  // phase-id-owner: strips a leading phase number from a dir name; extractPhaseToken returns the project-code-prefixed token, so it is not a behavior-preserving drop-in.
   const m = stripped.match(/^(\d+[A-Z]?(?:\.\d+)*)(?:-|$)/i);
   return m ? m[1] : null;
 }
@@ -188,7 +192,7 @@ function buildNewDirName(oldDirName: string, newId: string, projectCode: string 
   const stripped = stripProjectCodePrefix(oldDirName);
 
   // Extract slug: everything after "NN-" (the old phase num, including decimal like 02.1)
-  const slugMatch = stripped.match(/^\d+[A-Z]?(?:\.\d+)*-(.*)/i);
+  const slugMatch = stripped.match(new RegExp(`^${PHASE_NUMBER_TOKEN_SOURCE}-(.*)`, 'i'));
   const slug = slugMatch ? slugMatch[1] : stripped;
 
   // Build M-NN prefix (zero-pad both parts)
@@ -341,7 +345,7 @@ function computeMigrationPlan(cwd: string, options: Record<string, unknown> = {}
     // Rewrite heading line: "### Phase N: Name" → "### Phase M-NN: Name"
     const oldLine = lines[entry.lineIndex];
     const newLine = oldLine.replace(
-      /^(#{2,4}\s*(?:\[[^\]]+\]\s*)?Phase\s+)\d+[A-Z]?(?:\.\d+)*(\s*:)/i,
+      new RegExp(`^(#{2,4}\\s*(?:\\[[^\\]]+\\]\\s*)?Phase\\s+)${PHASE_NUMBER_TOKEN_SOURCE}(\\s*:)`, 'i'),
       `$1${mapping.newId}$2`
     );
     if (newLine !== oldLine) {
@@ -364,7 +368,9 @@ function computeMigrationPlan(cwd: string, options: Record<string, unknown> = {}
     if (roadmapEdits.some(e => e.lineIndex === i)) continue;
 
     // Match checklist items: "- [ ] **Phase N:**" or "- [x] Phase N:"  (also decimal)
-    const checklistMatch = line.match(/^(\s*-\s*\[[ x]\]\s*\*{0,2}Phase\s+)(\d+[A-Z]?(?:\.\d+)*)(\s*[:\s*])/i);
+    const checklistMatch = line.match(
+      new RegExp(`^(\\s*-\\s*\\[[ x]\\]\\s*\\*{0,2}Phase\\s+)(${PHASE_NUMBER_TOKEN_SOURCE})(\\s*[:\\s*])`, 'i')
+    );
     if (checklistMatch) {
       const legacyNum = checklistMatch[2];
       const cIntPart = parseInt(legacyNum, 10);
@@ -393,7 +399,7 @@ function computeMigrationPlan(cwd: string, options: Record<string, unknown> = {}
 
       if (newId) {
         const newLine = line.replace(
-          /^(\s*-\s*\[[ x]\]\s*\*{0,2}Phase\s+)\d+[A-Z]?(?:\.\d+)*(\s*[:\s*])/i,
+          new RegExp(`^(\\s*-\\s*\\[[ x]\\]\\s*\\*{0,2}Phase\\s+)${PHASE_NUMBER_TOKEN_SOURCE}(\\s*[:\\s*])`, 'i'),
           `$1${newId}$2`
         );
         if (newLine !== line) {

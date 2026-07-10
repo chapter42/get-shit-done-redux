@@ -37,6 +37,7 @@ const {
   phaseTokenMatches,
   OPTIONAL_PROJECT_CODE_PREFIX_SOURCE,
   OPTIONAL_PHASE_TAG_SOURCE,
+  PHASE_NUMBER_TOKEN_SOURCE,
 } = phaseIdMod;
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- phase-locator.cjs is an export= CommonJS module
 import phaseLocatorMod = require('./phase-locator.cjs');
@@ -374,8 +375,9 @@ function cmdFindPhase(cwd: string, phase: string, raw: boolean): void {
       if (!match) continue;
 
       const dirMatch =
-        match.match(new RegExp(`^${OPTIONAL_PROJECT_CODE_PREFIX_SOURCE}(\\d+[A-Z]?(?:\\.\\d+)*)-?(.*)`, 'i')) ||
-        match.match(/^(\d+[A-Z]?(?:\.\d+)*)-?(.*)/i);
+        match.match(
+          new RegExp(`^${OPTIONAL_PROJECT_CODE_PREFIX_SOURCE}(${PHASE_NUMBER_TOKEN_SOURCE})-?(.*)`, 'i')
+        ) || match.match(new RegExp(`^(${PHASE_NUMBER_TOKEN_SOURCE})-?(.*)`, 'i'));
       const phaseNumber = dirMatch ? dirMatch[1] : normalized;
       const phaseName = dirMatch && dirMatch[2] ? dirMatch[2] : null;
 
@@ -1672,7 +1674,7 @@ function cmdPhaseComplete(cwd: string, phaseNum: string, raw: boolean): void {
           .sort((a, b) => comparePhaseNum(a, b));
 
         for (const dir of dirs) {
-          const dm = dir.match(/^(\d+[A-Z]?(?:\.\d+)*)-?(.*)/i);
+          const dm = dir.match(new RegExp(`^(${PHASE_NUMBER_TOKEN_SOURCE})-?(.*)`, 'i'));
           if (dm) {
             if (/^999(?:\.|$)/.test(dm[1])) continue;
             if (comparePhaseNum(dm[1], phaseNum) > 0) {
@@ -1705,7 +1707,10 @@ function cmdPhaseComplete(cwd: string, phaseNum: string, raw: boolean): void {
           // #1729: `(?:\s*\([^)\n]*\))?` after the number tolerates a pre-colon
           // ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE) so
           // `### Phase N (Cluster B): X` resolves. Captures are unchanged.
-          const phasePattern = /(?:#{2,4}|-\s*\[[ xX]\])\s*(?:\*\*|__)?\s*Phase\s+(\d+[A-Z]?(?:\.\d+)*)(?:\s*\([^)\n]*\))?\s*:\s*([^\n*]+)/gi;
+          const phasePattern = new RegExp(
+            `(?:#{2,4}|-\\s*\\[[ xX]\\])\\s*(?:\\*\\*|__)?\\s*Phase\\s+(${PHASE_NUMBER_TOKEN_SOURCE})(?:\\s*\\([^)\\n]*\\))?\\s*:\\s*([^\\n*]+)`,
+            'gi'
+          );
           let pm: RegExpExecArray | null;
           while ((pm = phasePattern.exec(roadmapForPhases)) !== null) {
             if (comparePhaseNum(pm[1], phaseNum) > 0) {
@@ -1741,8 +1746,10 @@ function cmdPhaseComplete(cwd: string, phaseNum: string, raw: boolean): void {
       if (isLastPhase && roadmapContent !== null) {
         try {
           const milestoneScope = extractCurrentMilestone(roadmapContent, cwd);
-          const cbPattern =
-            /-\s*\[(x| )\]\s*(?:\*\*|__)?\s*Phase\s+(\d+[A-Z]?(?:\.\d+)*)(?:\s*\([^)\n]*\))?\s*:\s*([^\n*]+)/gi;
+          const cbPattern = new RegExp(
+            `-\\s*\\[(x| )\\]\\s*(?:\\*\\*|__)?\\s*Phase\\s+(${PHASE_NUMBER_TOKEN_SOURCE})(?:\\s*\\([^)\\n]*\\))?\\s*:\\s*([^\\n*]+)`,
+            'gi'
+          );
           let cbm: RegExpExecArray | null;
           let lowestOutstanding: { num: string; name: string } | null = null;
           while ((cbm = cbPattern.exec(milestoneScope)) !== null) {

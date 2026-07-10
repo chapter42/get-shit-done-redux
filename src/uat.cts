@@ -82,6 +82,7 @@ function cmdAuditUat(cwd: string, raw: boolean): void {
     .sort();
 
   for (const dir of dirs) {
+    // phase-id-owner: display phase field derived from a dir name (same family as the audit.cts sites); not equivalent to extractPhaseToken for dash-form dirs.
     const phaseMatch = dir.match(/^(\d+[A-Z]?(?:\.\d+)*)/i);
     const phaseNum = phaseMatch ? phaseMatch[1] : dir;
     const phaseDir = path.join(phasesDir, dir);

@@ -33,7 +33,7 @@
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import phaseIdMod = require('./phase-id.cjs');
-const { OPTIONAL_PROJECT_CODE_PREFIX_SOURCE } = phaseIdMod;
+const { OPTIONAL_PROJECT_CODE_PREFIX_SOURCE, PHASE_NUMBER_TOKEN_SOURCE } = phaseIdMod;
 
 // ── Issue #26: regex constants (W005, W006-archived) ────────────────────────
 // Matches legacy numeric dirs (01-setup), milestone-prefixed dirs (02-01-setup),
@@ -62,7 +62,7 @@ export function canonicalPlanStem(stem: string): string {
   // #2043: the plan component (after the phase number) must be zero-padded
   // (≥2 digits), so a digit-leading slug word (e.g. "46-6-rs-…") is not mistaken
   // for a "46-6" phase/plan pair.
-  const m = stem.match(/^(\d+[A-Z]?(?:\.\d+)*-\d{2,})/i);
+  const m = stem.match(new RegExp(`^(${PHASE_NUMBER_TOKEN_SOURCE}-\\d{2,})`, 'i'));
   return m ? m[1] : stem;
 }
 

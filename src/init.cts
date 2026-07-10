@@ -73,7 +73,7 @@ const {
   extractCurrentMilestone,
 } = roadmapParser;
 const { pathExistsInternal, generateSlugInternal, toPosixPath } = coreUtils;
-const { normalizePhaseName, phaseTokenMatches, stripProjectCodePrefix } = phaseId;
+const { normalizePhaseName, phaseTokenMatches, stripProjectCodePrefix, PHASE_NUMBER_TOKEN_SOURCE } = phaseId;
 const { pruneOrphanedWorktrees } = worktreeSafety;
 
 const {
@@ -1162,7 +1162,7 @@ function cmdInitMilestoneOp(cwd: string, raw: boolean): void {
     const roadmapRaw = fs.readFileSync(roadmapPath, 'utf-8');
     const currentSection = extractCurrentMilestone(roadmapRaw, cwd);
     // #1729: `(?:\s*\([^)\n]*\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
-    const phasePattern = /#{2,4}\s*Phase\s+(\d+[A-Z]?(?:\.\d+)*)(?:\s*\([^)\n]*\))?\s*:/gi;
+    const phasePattern = new RegExp(`#{2,4}\\s*Phase\\s+(${PHASE_NUMBER_TOKEN_SOURCE})(?:\\s*\\([^)\\n]*\\))?\\s*:`, 'gi');
     let m: RegExpExecArray | null;
     while ((m = phasePattern.exec(currentSection)) !== null) {
       if (/^999(?:\.|$)/.test(m[1])) continue;
@@ -1181,6 +1181,7 @@ function cmdInitMilestoneOp(cwd: string, raw: boolean): void {
     const entries = fs.readdirSync(phasesDir, { withFileTypes: true });
     for (const e of entries) {
       if (!e.isDirectory()) continue;
+      // phase-id-owner: dir-name phase-token parse; extractPhaseToken dash-separated sub-phase semantics differ, so a token-source swap would risk remapping phase<->directory matches. Kept local.
       const m = stripProjectCodePrefix(e.name).match(/^(\d+[A-Z]?(?:\.\d+)*)/);
       if (!m) continue;
       diskPhaseDirs.set(canonicalizePhase(m[1]), e.name);
@@ -1319,14 +1320,14 @@ function cmdInitManager(cwd: string, raw: boolean): void {
   })();
 
   const _checkboxStates = new Map<string, boolean>();
-  const _cbPattern = /-\s*\[(x| )\]\s*.*Phase\s+(\d+[A-Z]?(?:\.\d+)*)[:\s]/gi;
+  const _cbPattern = new RegExp(`-\\s*\\[(x| )\\]\\s*.*Phase\\s+(${PHASE_NUMBER_TOKEN_SOURCE})[:\\s]`, 'gi');
   let _cbMatch: RegExpExecArray | null;
   while ((_cbMatch = _cbPattern.exec(content)) !== null) {
     _checkboxStates.set(_cbMatch[2], _cbMatch[1].toLowerCase() === 'x');
   }
 
   // #1729: `(?:\s*\([^)\n]*\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
-  const phasePattern = /#{2,4}\s*Phase\s+(\d+[A-Z]?(?:\.\d+)*)(?:\s*\([^)\n]*\))?\s*:\s*([^\n]+)/gi;
+  const phasePattern = new RegExp(`#{2,4}\\s*Phase\\s+(${PHASE_NUMBER_TOKEN_SOURCE})(?:\\s*\\([^)\\n]*\\))?\\s*:\\s*([^\\n]+)`, 'gi');
   const phases: Record<string, unknown>[] = [];
   let match: RegExpExecArray | null;
 
@@ -1465,7 +1466,7 @@ function cmdInitManager(cwd: string, raw: boolean): void {
   );
   const phaseMap = new Map(phases.map((p) => [normalizePhaseNumber(p['number'] as string), p]));
 
-  const _allCompletedPattern = /-\s*\[x\]\s*.*Phase\s+(\d+[A-Z]?(?:\.\d+)*)[:\s]/gi;
+  const _allCompletedPattern = new RegExp(`-\\s*\\[x\\]\\s*.*Phase\\s+(${PHASE_NUMBER_TOKEN_SOURCE})[:\\s]`, 'gi');
   let _allMatch: RegExpExecArray | null;
   while ((_allMatch = _allCompletedPattern.exec(rawContent)) !== null) {
     const phaseNum = normalizePhaseNumber(_allMatch[1]);
@@ -1499,7 +1500,7 @@ function cmdInitManager(cwd: string, raw: boolean): void {
     ) {
       phase['deps_satisfied'] = true;
     } else {
-      const depNums = (phase['depends_on'] as string).match(/\d+[A-Z]?(?:\.\d+)*/gi) || [];
+      const depNums = (phase['depends_on'] as string).match(new RegExp(`${PHASE_NUMBER_TOKEN_SOURCE}`, 'gi')) || [];
       phase['deps_satisfied'] = depNums.every((n) => completedNums.has(normalizePhaseNumber(n)));
       phase['dep_phases'] = depNums;
     }
@@ -1689,13 +1690,13 @@ function cmdInitProgress(cwd: string, raw: boolean): void {
       cwd,
     );
     // #1729: `(?:\s*\([^)\n]*\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
-    const headingPattern = /#{2,4}\s*Phase\s+(\d+[A-Z]?(?:\.\d+)*)(?:\s*\([^)\n]*\))?\s*:\s*([^\n]+)/gi;
+    const headingPattern = new RegExp(`#{2,4}\\s*Phase\\s+(${PHASE_NUMBER_TOKEN_SOURCE})(?:\\s*\\([^)\\n]*\\))?\\s*:\\s*([^\\n]+)`, 'gi');
     let hm: RegExpExecArray | null;
     while ((hm = headingPattern.exec(roadmapContent)) !== null) {
       roadmapPhaseNums.add(hm[1]);
       roadmapPhaseNames.set(hm[1], hm[2].replace(/\(INSERTED\)/i, '').trim());
     }
-    const cbPattern = /-\s*\[(x| )\]\s*.*Phase\s+(\d+[A-Z]?(?:\.\d+)*)[:\s]/gi;
+    const cbPattern = new RegExp(`-\\s*\\[(x| )\\]\\s*.*Phase\\s+(${PHASE_NUMBER_TOKEN_SOURCE})[:\\s]`, 'gi');
     let cbm: RegExpExecArray | null;
     while ((cbm = cbPattern.exec(roadmapContent)) !== null) {
       roadmapCheckboxStates.set(cbm[2], cbm[1].toLowerCase() === 'x');
@@ -1714,13 +1715,16 @@ function cmdInitProgress(cwd: string, raw: boolean): void {
       .map((e) => e.name)
       .filter(isDirInMilestone)
       .sort((a, b) => {
+        // phase-id-owner: dir-name phase-token parse; extractPhaseToken dash-separated sub-phase semantics differ, so a token-source swap would risk remapping phase<->directory matches. Kept local.
         const pa = a.match(/^(\d+[A-Z]?(?:\.\d+)*)/i);
+        // phase-id-owner: dir-name phase-token parse; extractPhaseToken dash-separated sub-phase semantics differ, so a token-source swap would risk remapping phase<->directory matches. Kept local.
         const pb = b.match(/^(\d+[A-Z]?(?:\.\d+)*)/i);
         if (!pa || !pb) return a.localeCompare(b);
         return parseInt(pa[1], 10) - parseInt(pb[1], 10);
       });
 
     for (const dir of dirs) {
+      // phase-id-owner: dir-name phase-token parse; extractPhaseToken dash-separated sub-phase semantics differ, so a token-source swap would risk remapping phase<->directory matches. Kept local.
       const dirMatch = dir.match(/^(\d+[A-Z]?(?:\.\d+)*)-?(.*)/i);
       const phaseNumber = dirMatch ? dirMatch[1] : dir;
       const phaseName = dirMatch && dirMatch[2] ? dirMatch[2] : null;

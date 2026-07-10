@@ -482,6 +482,7 @@ function scanUatGaps(planDir: string): UatGapItem[] {
 
   for (const dir of dirs) {
     const phaseDir = path.join(phasesDir, dir);
+    // phase-id-owner: cosmetic phase label derived from a dir name for JSON output; the single-segment capture is not equivalent to extractPhaseToken dash-continuation semantics, so not a behavior-preserving drop-in.
     const phaseMatch = dir.match(/^(\d+[A-Z]?(?:\.\d+)*)/i);
     const phaseNum = phaseMatch ? phaseMatch[1] : dir;
 
@@ -552,6 +553,7 @@ function scanVerificationGaps(planDir: string): VerificationGapItem[] {
 
   for (const dir of dirs) {
     const phaseDir = path.join(phasesDir, dir);
+    // phase-id-owner: cosmetic phase label derived from a dir name for JSON output; the single-segment capture is not equivalent to extractPhaseToken dash-continuation semantics, so not a behavior-preserving drop-in.
     const phaseMatch = dir.match(/^(\d+[A-Z]?(?:\.\d+)*)/i);
     const phaseNum = phaseMatch ? phaseMatch[1] : dir;
 
@@ -614,6 +616,7 @@ function scanContextQuestions(planDir: string): ContextQuestionItem[] {
 
   for (const dir of dirs) {
     const phaseDir = path.join(phasesDir, dir);
+    // phase-id-owner: cosmetic phase label derived from a dir name for JSON output; the single-segment capture is not equivalent to extractPhaseToken dash-continuation semantics, so not a behavior-preserving drop-in.
     const phaseMatch = dir.match(/^(\d+[A-Z]?(?:\.\d+)*)/i);
     const phaseNum = phaseMatch ? phaseMatch[1] : dir;
 

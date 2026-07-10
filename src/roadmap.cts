@@ -298,6 +298,7 @@ function cmdRoadmapAnalyze(cwd: string, raw: boolean): void {
 
   // Extract all phase headings: ## Phase N: Name or ### Phase N: Name
   // #1729: `(?:\s*\([^)\n]*\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
+  // phase-id-owner: uses the [.-] (dot-or-dash) separator variant, not the canonical dot-only token; a swap to PHASE_NUMBER_TOKEN_SOURCE would drop hyphenated phase-id matches.
   const phasePattern = /#{2,4}\s*(?:\[[^\]]+\]\s*)?Phase\s+(\d+[A-Z]?(?:[.-]\d+)*)(?:\s*\([^)\n]*\))?\s*:\s*([^\n]+)/gi;
   const phases: Array<{
     number: string;
@@ -437,6 +438,7 @@ function cmdRoadmapAnalyze(cwd: string, raw: boolean): void {
   // The char class must allow `-` (not just `.`) so dash-separated milestone-prefixed
   // IDs (e.g. `1-01`) match the detail-heading scanner above; otherwise they truncate
   // at the dash (`1-01` -> `1`) and every such phase reports a phantom missing detail.
+  // phase-id-owner: uses the [.-] (dot-or-dash) separator variant, not the canonical dot-only token; a swap to PHASE_NUMBER_TOKEN_SOURCE would drop hyphenated phase-id matches.
   const checklistPattern = /-\s*\[[ x]\]\s*\*\*Phase\s+(\d+[A-Z]?(?:[.-]\d+)*)/gi;
   const checklistPhases = new Set<string>();
   let checklistMatch: RegExpExecArray | null;
