@@ -37,6 +37,7 @@ const {
   phaseTokenMatches,
   OPTIONAL_PROJECT_CODE_PREFIX_SOURCE,
   OPTIONAL_PHASE_TAG_SOURCE,
+  PHASE_NUMBER_TOKEN_SOURCE,
 } = phaseIdMod;
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- phase-locator.cjs is an export= CommonJS module
 import phaseLocatorMod = require('./phase-locator.cjs');
@@ -374,8 +375,9 @@ function cmdFindPhase(cwd: string, phase: string, raw: boolean): void {
       if (!match) continue;
 
       const dirMatch =
-        match.match(new RegExp(`^${OPTIONAL_PROJECT_CODE_PREFIX_SOURCE}(\\d+[A-Z]?(?:\\.\\d+)*)-?(.*)`, 'i')) ||
-        match.match(/^(\d+[A-Z]?(?:\.\d+)*)-?(.*)/i);
+        match.match(
+          new RegExp(`^${OPTIONAL_PROJECT_CODE_PREFIX_SOURCE}(${PHASE_NUMBER_TOKEN_SOURCE})-?(.*)`, 'i')
+        ) || match.match(new RegExp(`^(${PHASE_NUMBER_TOKEN_SOURCE})-?(.*)`, 'i'));
       const phaseNumber = dirMatch ? dirMatch[1] : normalized;
       const phaseName = dirMatch && dirMatch[2] ? dirMatch[2] : null;
 
@@ -711,13 +713,13 @@ function cmdPhaseAdd(cwd: string, description: string, raw: boolean, customId?: 
       // (section header, roadmap bullet, or on-disk directory) is counted:
 
       // 1) Section headers: ### Phase N: / ## Phase N: / #### Phase N:
-      // #1729: `(?:\s*\([^)\n]*\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
-      const headerPattern = /#{2,4}\s*Phase\s+(\d+)[A-Z]?(?:\.\d+)*(?:\s*\([^)\n]*\))?:/gi;
+      // #1729: `(?:\s*\([^)\n]{0,200}\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
+      const headerPattern = /#{2,4}\s*Phase\s+(\d+)[A-Z]?(?:\.\d+)*(?:\s*\([^)\n]{0,200}\))?:/gi;
       // 2) Roadmap bullet entries: - [ ] **Phase N: ...** (all checkbox variants)
       // The lookahead accepts colon, decimal-dot, whitespace, bold-close asterisk,
       // or end-of-line so titleless forms ("- [ ] **Phase 11**", "- [ ] Phase 11")
       // are counted and cannot collide with a freshly-added phase. (#1229)
-      const bulletPattern = /^[ \t]*-[ \t]*\[[^\]]*\][ \t]*\*{0,2}Phase[ \t]+(\d+)(?=[:.\s*]|$)/gim;
+      const bulletPattern = /^[ \t]*-[ \t]*\[[^\]]{0,200}\][ \t]*\*{0,2}Phase[ \t]+(\d+)(?=[:.\s*]|$)/gim;
 
       const usedPhaseNums = new Set<number>();
       let m: RegExpExecArray | null;
@@ -809,8 +811,8 @@ function cmdPhaseAddBatch(cwd: string, descriptions: string[], raw: boolean): vo
     const content = extractCurrentMilestone(rawContent, cwd);
     let maxPhase = 0;
     if (config.phase_naming !== 'custom') {
-      // #1729: `(?:\s*\([^)\n]*\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
-      const phasePattern = /#{2,4}\s*Phase\s+(\d+)[A-Z]?(?:\.\d+)*(?:\s*\([^)\n]*\))?:/gi;
+      // #1729: `(?:\s*\([^)\n]{0,200}\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
+      const phasePattern = /#{2,4}\s*Phase\s+(\d+)[A-Z]?(?:\.\d+)*(?:\s*\([^)\n]{0,200}\))?:/gi;
       let m: RegExpExecArray | null;
       while ((m = phasePattern.exec(content)) !== null) {
         const num = parseInt(m[1], 10);
@@ -1193,7 +1195,7 @@ function updateRoadmapAfterPhaseRemoval(
       // #1729: fold an optional pre-colon ( ) tag into the suffix capture so it
       // is re-emitted verbatim — a tagged later phase still gets renumbered.
       content = content.replace(
-        /(#{2,4}\s*Phase\s+)(\d+(?:\.\d+)?)((?:\s*\([^)\n]*\))?\s*:)/gi,
+        /(#{2,4}\s*Phase\s+)(\d+(?:\.\d+)?)((?:\s*\([^)\n]{0,200}\))?\s*:)/gi,
         (_match, prefix: string, num: string, suffix: string) =>
           `${prefix}${decrementRoadmapPhaseToken(num, removedInt)}${suffix}`,
       );
@@ -1517,7 +1519,7 @@ function cmdPhaseComplete(cwd: string, phaseNum: string, raw: boolean): void {
         }
 
         const planCountPattern = new RegExp(
-          `(#{2,4}\\s*Phase\\s+${phaseEscaped}[\\s\\S]*?\\*\\*Plans:\\*\\*\\s*)[^\\n]+`,
+          `(#{2,4}\\s*Phase\\s+${phaseEscaped}(?:(?!\\n#{1,4}\\s)[\\s\\S])*?\\*\\*Plans:\\*\\*\\s*)[^\\n]+`,
           'i',
         );
         roadmapContent = roadmapContent.replace(
@@ -1672,7 +1674,7 @@ function cmdPhaseComplete(cwd: string, phaseNum: string, raw: boolean): void {
           .sort((a, b) => comparePhaseNum(a, b));
 
         for (const dir of dirs) {
-          const dm = dir.match(/^(\d+[A-Z]?(?:\.\d+)*)-?(.*)/i);
+          const dm = dir.match(new RegExp(`^(${PHASE_NUMBER_TOKEN_SOURCE})-?(.*)`, 'i'));
           if (dm) {
             if (/^999(?:\.|$)/.test(dm[1])) continue;
             if (comparePhaseNum(dm[1], phaseNum) > 0) {
@@ -1702,10 +1704,13 @@ function cmdPhaseComplete(cwd: string, phaseNum: string, raw: boolean): void {
           // phase. Allow optional `**`/`__` emphasis after the marker and stop
           // the name capture at emphasis so bold names slug cleanly; the number
           // capture is unchanged.
-          // #1729: `(?:\s*\([^)\n]*\))?` after the number tolerates a pre-colon
+          // #1729: `(?:\s*\([^)\n]{0,200}\))?` after the number tolerates a pre-colon
           // ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE) so
           // `### Phase N (Cluster B): X` resolves. Captures are unchanged.
-          const phasePattern = /(?:#{2,4}|-\s*\[[ xX]\])\s*(?:\*\*|__)?\s*Phase\s+(\d+[A-Z]?(?:\.\d+)*)(?:\s*\([^)\n]*\))?\s*:\s*([^\n*]+)/gi;
+          const phasePattern = new RegExp(
+            `(?:#{2,4}|-\\s*\\[[ xX]\\])\\s*(?:\\*\\*|__)?\\s*Phase\\s+(${PHASE_NUMBER_TOKEN_SOURCE})(?:\\s*\\([^)\\n]{0,200}\\))?\\s*:\\s*([^\\n*]+)`,
+            'gi'
+          );
           let pm: RegExpExecArray | null;
           while ((pm = phasePattern.exec(roadmapForPhases)) !== null) {
             if (comparePhaseNum(pm[1], phaseNum) > 0) {
@@ -1741,8 +1746,10 @@ function cmdPhaseComplete(cwd: string, phaseNum: string, raw: boolean): void {
       if (isLastPhase && roadmapContent !== null) {
         try {
           const milestoneScope = extractCurrentMilestone(roadmapContent, cwd);
-          const cbPattern =
-            /-\s*\[(x| )\]\s*(?:\*\*|__)?\s*Phase\s+(\d+[A-Z]?(?:\.\d+)*)(?:\s*\([^)\n]*\))?\s*:\s*([^\n*]+)/gi;
+          const cbPattern = new RegExp(
+            `-\\s*\\[(x| )\\]\\s*(?:\\*\\*|__)?\\s*Phase\\s+(${PHASE_NUMBER_TOKEN_SOURCE})(?:\\s*\\([^)\\n]{0,200}\\))?\\s*:\\s*([^\\n*]+)`,
+            'gi'
+          );
           let cbm: RegExpExecArray | null;
           let lowestOutstanding: { num: string; name: string } | null = null;
           while ((cbm = cbPattern.exec(milestoneScope)) !== null) {

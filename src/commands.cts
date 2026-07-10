@@ -1334,7 +1334,7 @@ function cmdTodoMatchPhase(cwd: string, phase: string | undefined, raw: boolean)
       for (const pf of planFiles) {
         const planContent = platformReadSync(path.join(phaseDir, pf));
         if (planContent === null) continue;
-        const fmFiles = planContent.match(/files_modified:\s*\[([^\]]*)\]/);
+        const fmFiles = planContent.match(/files_modified:\s*\[([^\]]{0,8000})\]/);
         if (fmFiles) {
           phasePlans.push(...fmFiles[1].split(',').map(s => s.trim().replace(/['"]/g, '')).filter(Boolean));
         }
@@ -1516,8 +1516,8 @@ function cmdStats(cwd: string, format: string | undefined, raw: boolean): void {
     const roadmapContent = extractCurrentMilestone(roadmapRaw, cwd);
     // Matches both plain numeric (Phase 1:) and milestone-prefixed (Phase 2-01:) headings.
     // Also tolerates optional [bracket-token] scope prefix on phase headings.
-    // #1729: `(?:\s*\([^)\n]*\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
-    const headingPattern = /#{2,4}\s*(?:\[[^\]]+\]\s*)?Phase\s+([\w][\w.-]*)(?:\s*\([^)\n]*\))?\s*:\s*([^\n]+)/gi;
+    // #1729: `(?:\s*\([^)\n]{0,200}\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
+    const headingPattern = /#{2,4}\s*(?:\[[^\]]{1,200}\]\s*)?Phase\s+([\w][\w.-]*)(?:\s*\([^)\n]{0,200}\))?\s*:\s*([^\n]+)/gi;
     let match: RegExpExecArray | null;
     while ((match = headingPattern.exec(roadmapContent)) !== null) {
       const key = normalizePhaseName(match[1]);

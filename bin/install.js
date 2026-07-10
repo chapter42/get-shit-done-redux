@@ -1851,7 +1851,7 @@ function convertClaudeCommandToClaudeSkill(content, skillName, runtime = null, c
   // Hermes' SKILL.md spec lists `version` as a required frontmatter field.
   // Track GSD's package version so Hermes' skill_view() reports a stable
   // identifier per install.
-  if (runtime === 'hermes') fm += `version: ${yamlQuote(pkg.version)}\n`;
+  if (_hostBehaviors(runtime).skillFrontmatterVersion) fm += `version: ${yamlQuote(pkg.version)}\n`;
   // #778 (b) — Qwen-only numeric priority for /skills ordering. Scoped to qwen
   // so Claude/Hermes skill frontmatter is unchanged (they ignore the field, but
   // we keep their output byte-stable). skillName is the `gsd-<stem>` dir name.
@@ -6774,9 +6774,13 @@ function uninstall(isGlobal, runtime = DEFAULT_RUNTIME) {
   // Get the target directory based on runtime and install type. Cline local
   // installs write to the project root (.clinerules/ lives at the root, not in
   // a .cline/ subdir), mirroring the install() path resolution (#787).
+  // Descriptor-driven (ADR-1239 / #2090): cline local installs write to the
+  // project root (.clinerules/ lives at the root, not in a .cline/ subdir),
+  // mirroring the install() path resolution (#787). Folded from a hardcoded
+  // `runtime === 'cline'` branch into hostBehaviors.localTargetIsProjectRoot.
   const targetDir = isGlobal
     ? getGlobalConfigDir(runtime, explicitConfigDir)
-    : runtime === 'cline'
+    : _hostBehaviors(runtime).localTargetIsProjectRoot
       ? process.cwd()
       : path.join(process.cwd(), dirName);
 
@@ -6941,7 +6945,9 @@ function uninstall(isGlobal, runtime = DEFAULT_RUNTIME) {
   // 1b-cline. Non-layout Cline side-effects (issue #787): remove the
   // directory-form rules + PreToolUse hook, and strip the GSD block from the
   // global cross-tool ~/.agents/AGENTS.md target.
-  if (runtime === 'cline') {
+  // Descriptor-driven (ADR-1239 / #2090): folded from `runtime === 'cline'`
+  // into hostBehaviors.clineRulesSurface.
+  if (_hostBehaviors(runtime).clineRulesSurface) {
     const clinerulesDir = path.join(targetDir, '.clinerules');
     for (const rel of ['gsd.md', path.join('hooks', 'PreToolUse')]) {
       const p = path.join(clinerulesDir, rel);
@@ -7061,7 +7067,7 @@ function uninstall(isGlobal, runtime = DEFAULT_RUNTIME) {
   //     removes the directory; we must preserve/restore user artifacts before that path.
   //     This block runs AFTER uninstallRuntimeArtifacts, so we check if the directory
   //     was already removed and skip if so (idempotent).
-  if (isQwen || isHermes) {
+  if (isQwen || _hostBehaviors(runtime).legacyCommandsGsdCleanup === true) {
     // dev-preferences may have survived in skills/ as SKILL.md — nothing to do for
     // that case. If a stale commands/gsd/ still exists (e.g. legacy was not removed),
     // attempt migration. In practice _runLegacyUninstallCleanup removes it first,
@@ -7815,7 +7821,7 @@ function writeManifest(configDir, runtime = DEFAULT_RUNTIME, options = {}) {
   // resolves destSubpath (which includes hermes's 'skills/gsd' nesting) — do not
   // re-append 'gsd' or the hermes dir gets double-nested to skills/gsd/gsd.
   const codexSkillsDir = _resolveSkillsRootDir(runtime, configDir, options.scope === 'local' ? 'local' : 'global');
-  const codexSkillsManifestPrefix = isHermes ? 'skills/gsd/' : 'skills/';
+  const codexSkillsManifestPrefix = _hostBehaviors(runtime).skillsManifestPrefix || 'skills/';
   const agentsDir = path.join(configDir, 'agents');
   const manifest = {
     version: pkg.version,
@@ -7865,8 +7871,8 @@ function writeManifest(configDir, runtime = DEFAULT_RUNTIME, options = {}) {
         manifest.files[`${codexSkillsManifestPrefix}${skillName}/${rel}`] = hash;
       }
     }
-    // For Hermes, also hash the category DESCRIPTION.md so reinstall detects drift.
-    if (isHermes) {
+    // Descriptor-driven (#2090): hash the category DESCRIPTION.md so reinstall detects drift.
+    if (_hostBehaviors(runtime).trackCategoryDescription) {
       const descPath = path.join(codexSkillsDir, 'DESCRIPTION.md');
       if (fs.existsSync(descPath)) {
         manifest.files['skills/gsd/DESCRIPTION.md'] = fileHash(descPath);
@@ -7892,7 +7898,9 @@ function writeManifest(configDir, runtime = DEFAULT_RUNTIME, options = {}) {
   // Track Cline directory-form artifacts in the manifest (issue #787): the
   // rules file and the PreToolUse hook. (~/.agents/AGENTS.md is tracked via its
   // marker block, not the per-configDir manifest, since it lives outside it.)
-  if (isCline) {
+  // Descriptor-driven (ADR-1239 / #2090): folded from `isCline` into
+  // hostBehaviors.clineRulesSurface.
+  if (_hostBehaviors(runtime).clineRulesSurface) {
     for (const rel of ['.clinerules/gsd.md', '.clinerules/hooks/PreToolUse']) {
       const dest = path.join(configDir, rel);
       if (fs.existsSync(dest)) {
@@ -7903,7 +7911,9 @@ function writeManifest(configDir, runtime = DEFAULT_RUNTIME, options = {}) {
 
   // Track hook files so saveLocalPatches() can detect user modifications
   // Hooks are only installed for runtimes that use settings.json (not Codex/Copilot/Cline)
-  if (!isCodex && !isCopilot && !isCline && !isKimi) {
+  // Descriptor-driven (ADR-1239 / #2089+#2090): cline's exclusion is via
+  // hostBehaviors.skipSharedHooksInstall (was hardcoded !isCline).
+  if (!isCodex && !isCopilot && _hostBehaviors(runtime).skipSharedHooksInstall !== true && !isWindsurf && !isTrae && !isKimi) {
     const hooksDir = path.join(configDir, 'hooks');
     if (fs.existsSync(hooksDir)) {
       // Drive from INSTALLED_HOOK_FILES (the canonical HOOKS_TO_COPY set from
@@ -8348,15 +8358,17 @@ function install(isGlobal, runtime = DEFAULT_RUNTIME, options = {}) {
   };
 
   // Get the target directory based on runtime and install type.
-  // Cline local installs write to the project root (like Claude Code) — .clinerules
-  // lives at the root, not inside a .cline/ subdirectory.
+  // Descriptor-driven (ADR-1239 / #2090): cline local installs write to the
+  // project root (like Claude Code) — .clinerules lives at the root, not inside
+  // a .cline/ subdirectory. Folded from `isCline` into
+  // hostBehaviors.localTargetIsProjectRoot.
   // #791: antigravity local installs write to .agents/ (canonical). The legacy .agent/
   // directory is recognized by RUNTIME_DIRS (update-context) and _LEGACY_SCAN_SUBDIR_NAMES
   // but NOT auto-removed here; legacy .agent/ gsd artifacts are recognized but not
   // auto-removed on reinstall (dual-read fallback per issue #791 spec).
   const targetDir = isGlobal
     ? getGlobalConfigDir(runtime, explicitConfigDir)
-    : isCline
+    : _hostBehaviors(runtime).localTargetIsProjectRoot
       ? process.cwd()
       : path.join(process.cwd(), dirName);
 
@@ -8810,13 +8822,13 @@ function install(isGlobal, runtime = DEFAULT_RUNTIME, options = {}) {
       }
     }
 
-    // Hermes only: write DESCRIPTION.md for the gsd/ category after layout install
-    if (isHermes) {
+    // Descriptor-driven (#2090): write DESCRIPTION.md for the gsd/ category after layout install
+    if (_hostBehaviors(runtime).writeCategoryDescription) {
       writeHermesCategoryDescription(path.join(targetDir, 'skills', 'gsd'));
     }
 
     // Verify installed artifacts and report
-    if (isHermes) {
+    if (_hostBehaviors(runtime).reportSkillsCount) {
       const hermesSkillsDir = path.join(targetDir, 'skills', 'gsd');
       if (fs.existsSync(hermesSkillsDir)) {
         // Hermes layout uses prefix: 'gsd-' (#947) — skill dirs have gsd-<stem> names
@@ -8929,10 +8941,12 @@ function install(isGlobal, runtime = DEFAULT_RUNTIME, options = {}) {
         }
       }
     }
-  } else if (isCline) {
+  } else if (_hostBehaviors(runtime).localCommandsViaRules) {
     // Cline local install: rules-based only — commands are embedded in .clinerules (generated below).
     // No skills/commands directory needed for local installs.
     // Global installs are handled above by _isSkillsRuntime (#782).
+    // Descriptor-driven (ADR-1239 / #2090): folded from `isCline` into
+    // hostBehaviors.localCommandsViaRules.
     console.log(`  ${green}✓${reset} Cline: commands will be available via .clinerules`);
   } else {
     // Claude Code local: flat gsd-<cmd>.md layout — Claude Code registers
@@ -9212,13 +9226,15 @@ function install(isGlobal, runtime = DEFAULT_RUNTIME, options = {}) {
           content = convertClaudeAgentToTraeAgent(content);
         } else if (isCodebuddy) {
           content = convertClaudeAgentToCodebuddyAgent(content);
-        } else if (isCline) {
+        } else if (_hostBehaviors(runtime).frontmatterDialect === 'cline') {
+          // Descriptor-driven (ADR-1239 / #2090): folded from `isCline` into
+          // hostBehaviors.frontmatterDialect === 'cline'.
           content = convertClaudeAgentToClineAgent(content);
         } else if (isQwen) {
           content = content.replace(/CLAUDE\.md/g, 'QWEN.md');
           content = content.replace(/\bClaude Code\b/g, 'Qwen Code');
           content = content.replace(/\.claude\//g, '.qwen/');
-        } else if (isHermes) {
+        } else if (_hostBehaviors(runtime).brandingRewrites) {
           content = content.replace(/CLAUDE\.md/g, 'HERMES.md');
           content = content.replace(/\bClaude Code\b/g, 'Hermes Agent');
           content = content.replace(/\.claude\//g, '.hermes/');
@@ -9286,7 +9302,9 @@ function install(isGlobal, runtime = DEFAULT_RUNTIME, options = {}) {
   // them and the CommonJS package.json marker written below.
   // #2089: Cursor's exclusion is now descriptor-driven via
   // hostBehaviors.skipSharedHooksInstall (was hardcoded !isCursor).
-  if (!isCodex && !isCopilot && _hostBehaviors(runtime).skipSharedHooksInstall !== true && !isWindsurf && !isTrae && !isCline && !isKimi && !isKilo && !isZcode) {
+  // #2090: Cline's exclusion is likewise descriptor-driven (cline declares
+  // skipSharedHooksInstall:true) — the redundant `&& !isCline` was removed.
+  if (!isCodex && !isCopilot && _hostBehaviors(runtime).skipSharedHooksInstall !== true && !isWindsurf && !isTrae && !isKimi && !isKilo && !isZcode) {
     // Write package.json to force CommonJS mode for GSD scripts
     // Prevents "require is not defined" errors when project has "type": "module"
     // Node.js walks up looking for package.json - this stops inheritance from project
@@ -9315,7 +9333,7 @@ function install(isGlobal, runtime = DEFAULT_RUNTIME, options = {}) {
               content = content.replace(/CLAUDE\.md/g, 'QWEN.md');
               content = content.replace(/\bClaude Code\b/g, 'Qwen Code');
             }
-            if (isHermes) {
+            if (_hostBehaviors(runtime).brandingRewrites) {
               content = content.replace(/CLAUDE\.md/g, 'HERMES.md');
               content = content.replace(/\bClaude Code\b/g, 'Hermes Agent');
             }
@@ -9378,15 +9396,15 @@ function install(isGlobal, runtime = DEFAULT_RUNTIME, options = {}) {
   // Gate hooks/lib/ install on the same runtimes that receive hooks (see line ~8702).
   // Codex/Copilot/Cursor/Windsurf/Trae/Cline do not use the shared hooks/lib/ helpers
   // (Cursor uses standalone .js hook scripts registered via hooks.json — gated
-  // descriptor-driven via hostBehaviors.skipSharedHooksInstall, #2089; Codex uses
-  // hooks.json directly; the others skip hooks entirely); Kilo and ZCode also skip
-  // hooks entirely (hooksSurface:'none' with no plugin surface — #1821). OpenCode
-  // is NOT excluded: its #1914 plugin adapter spawns the staged hooks and requires
-  // hooks/lib/ helpers. None of the excluded runtimes must receive the hooks/lib/
-  // helpers — otherwise the Codex comment downstream ("we deliberately do *not*
-  // copy hooks/lib/ for Codex") is contradicted in practice.
+  // descriptor-driven via hostBehaviors.skipSharedHooksInstall, #2089; Cline likewise
+  // #2090; Codex uses hooks.json directly; the others skip hooks entirely); Kilo and
+  // ZCode also skip hooks entirely (hooksSurface:'none' with no plugin surface — #1821).
+  // OpenCode is NOT excluded: its #1914 plugin adapter spawns the staged hooks and
+  // requires hooks/lib/ helpers. None of the excluded runtimes must receive the
+  // hooks/lib/ helpers — otherwise the Codex comment downstream ("we deliberately do
+  // *not* copy hooks/lib/ for Codex") is contradicted in practice.
   const hooksLibSrc = path.join(src, 'hooks', 'lib');
-  if (!isCodex && !isCopilot && _hostBehaviors(runtime).skipSharedHooksInstall !== true && !isWindsurf && !isTrae && !isCline && !isKimi && !isKilo && !isZcode && fs.existsSync(hooksLibSrc)) {
+  if (!isCodex && !isCopilot && _hostBehaviors(runtime).skipSharedHooksInstall !== true && !isWindsurf && !isTrae && !isKimi && !isKilo && !isZcode && fs.existsSync(hooksLibSrc)) {
     const hooksLibDest = path.join(targetDir, 'hooks', 'lib');
     fs.mkdirSync(hooksLibDest, { recursive: true });
     copyLibDir(hooksLibSrc, hooksLibDest, GSD_HOOK_LIB_FILES);

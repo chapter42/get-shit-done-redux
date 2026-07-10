@@ -618,6 +618,14 @@ const capabilities = {
         "stateIO": "filesystem",
         "transport": "mcp",
         "runtime": "node"
+      },
+      "hostBehaviors": {
+        "reapplyCommand": "/gsd-update --reapply",
+        "frontmatterDialect": "cline",
+        "skipSharedHooksInstall": true,
+        "localTargetIsProjectRoot": true,
+        "clineRulesSurface": true,
+        "localCommandsViaRules": true
       }
     }
   },
@@ -1374,6 +1382,21 @@ const capabilities = {
       "writesSharedSettings": true,
       "permissionWriter": null,
       "extendedHookEvents": [],
+      "extensionEvents": "hermes",
+      "hostBehaviors": {
+        "skillFrontmatterVersion": true,
+        "skillsManifestPrefix": "skills/gsd/",
+        "trackCategoryDescription": true,
+        "writeCategoryDescription": true,
+        "reportSkillsCount": true,
+        "legacyCommandsGsdCleanup": true,
+        "brandingRewrites": {
+          "CLAUDE.md": "HERMES.md",
+          "Claude Code": "Hermes Agent",
+          ".claude/": ".hermes/"
+        },
+        "reapplyCommand": "gsd-update --reapply (mention the skill name)"
+      },
       "hostIntegration": {
         "embeddingMode": "imperative",
         "commandSurface": "slash-programmatic",
@@ -4029,6 +4052,14 @@ const runtimes = {
         "stateIO": "filesystem",
         "transport": "mcp",
         "runtime": "node"
+      },
+      "hostBehaviors": {
+        "reapplyCommand": "/gsd-update --reapply",
+        "frontmatterDialect": "cline",
+        "skipSharedHooksInstall": true,
+        "localTargetIsProjectRoot": true,
+        "clineRulesSurface": true,
+        "localCommandsViaRules": true
       }
     }
   },
@@ -4481,6 +4512,21 @@ const runtimes = {
       "writesSharedSettings": true,
       "permissionWriter": null,
       "extendedHookEvents": [],
+      "extensionEvents": "hermes",
+      "hostBehaviors": {
+        "skillFrontmatterVersion": true,
+        "skillsManifestPrefix": "skills/gsd/",
+        "trackCategoryDescription": true,
+        "writeCategoryDescription": true,
+        "reportSkillsCount": true,
+        "legacyCommandsGsdCleanup": true,
+        "brandingRewrites": {
+          "CLAUDE.md": "HERMES.md",
+          "Claude Code": "Hermes Agent",
+          ".claude/": ".hermes/"
+        },
+        "reapplyCommand": "gsd-update --reapply (mention the skill name)"
+      },
       "hostIntegration": {
         "embeddingMode": "imperative",
         "commandSurface": "slash-programmatic",
