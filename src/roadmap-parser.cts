@@ -32,7 +32,7 @@ const {
 import planningWorkspace = require('./planning-workspace.cjs');
 const { planningDir } = planningWorkspace;
 import { platformReadSync } from './shell-command-projection.cjs';
-import { tokenizeHeadings } from './markdown-sectionizer.cjs';
+import { tokenizeHeadings, stripTaggedBlocks } from './markdown-sectionizer.cjs';
 
 // ─── Roadmap milestone scoping ───────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ import { tokenizeHeadings } from './markdown-sectionizer.cjs';
  * Strip shipped milestone content wrapped in <details> blocks.
  */
 function stripShippedMilestones(content: string): string {
-  return content.replace(/<details>[\s\S]*?<\/details>/gi, '');
+  return stripTaggedBlocks(content, 'details');
 }
 
 /**
@@ -96,8 +96,7 @@ function extractCurrentMilestone(content: string, cwd?: string): string {
         const anyMilestoneOrDetails = /^#{1,3}\s+(?!Phase\s+\S)(?:.*v\d+\.\d+|✅|📋|🚧|🔄)|<details/im;
         const firstMilestoneMatch = content.match(anyMilestoneOrDetails);
         const preambleCutoff = firstMilestoneMatch ? firstMilestoneMatch.index! : detailsOpenIdx;
-        const preamble = content.slice(0, preambleCutoff)
-          .replace(/<details>[\s\S]*?<\/details>/gi, '')
+        const preamble = stripTaggedBlocks(content.slice(0, preambleCutoff), 'details')
           // #1729: `(?:\s*\([^)\n]{0,200}\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
           .replace(/^#{2,4}\s*Phase\s+[\w][\w.-]*(?:\s*\([^)\n]{0,200}\))?\s*:[^\n]*(?:\n(?!#{1,6}\s)[^\n]*)*\n?/gim, '')
           .replace(/^#{1,4}\s*Phase Details\b[^\n]*\n?/gim, '');
@@ -177,8 +176,7 @@ function extractCurrentMilestone(content: string, cwd?: string): string {
     );
   }
 
-  const preamble = beforeMilestones
-    .replace(/<details>[\s\S]*?<\/details>/gi, '')
+  const preamble = stripTaggedBlocks(beforeMilestones, 'details')
     // #1729: `(?:\s*\([^)\n]{0,200}\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
     .replace(/^#{2,4}\s*Phase\s+[\w][\w.-]*(?:\s*\([^)\n]{0,200}\))?\s*:[^\n]*(?:\n(?!#{1,6}\s)[^\n]*)*\n?/gim, '')
     .replace(/^#{1,4}\s*Phase Details\b[^\n]*\n?/gim, '');

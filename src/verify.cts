@@ -26,6 +26,7 @@ import { PACKAGE_NAME } from './package-identity.cjs';
 import { formatGsdSlash, resolveRuntime } from './runtime-slash.cjs';
 import { detectSchemaFiles, checkSchemaDrift } from './schema-detect.cjs';
 import { isCanonicalPlanningFile } from './artifacts.cjs';
+import { extractTaggedBlocks } from './markdown-sectionizer.cjs';
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- agent-install-check.cjs is an export= CommonJS module
 import agentInstallCheck = require('./agent-install-check.cjs');
 const { checkAgentsInstalled } = agentInstallCheck;
@@ -205,10 +206,7 @@ function scanNegativeGrepCommentEcho(content: string): { errors: string[]; warni
   //    while a prose echo on the same line is still caught.
   const cmdSpanRe =
     /grep(?:\s+-{1,2}[A-Za-z][A-Za-z-]*)+\s+(?:'[^']*'|"[^"]*"|[^\s'"|>&;]+)[^\n]*?(?:==|-eq|=)\s*0\b/g;
-  const actionZones: string[] = [];
-  const actionRe = /<action>([\s\S]*?)<\/action>/g;
-  let acm: RegExpExecArray | null;
-  while ((acm = actionRe.exec(text)) !== null) actionZones.push(acm[1]);
+  const actionZones = extractTaggedBlocks(text, 'action');
   const scannableActionText = actionZones.map((zone) => zone.replace(cmdSpanRe, ' ')).join('\n');
 
   // 3. Per shell SEGMENT (split lines on && / ||) extract count-grep literals and
@@ -364,32 +362,21 @@ function scanFileWideNegativeGateConflict(content: string): { warnings: string[]
     gateText: string;  // <verify>+<automated>+<acceptance_criteria> text
     reqText: string;   // <action>+<acceptance_criteria> text (requirement side)
   }
-  const taskRe = /<task[^>]*>([\s\S]*?)<\/task>/g;
   const tasks: TaskInfo[] = [];
-  let tm: RegExpExecArray | null;
-  while ((tm = taskRe.exec(text)) !== null) {
-    const tc = tm[1];
+  for (const tc of extractTaggedBlocks(text, 'task')) {
     // Extract task name.
-    const namem = tc.match(/<name>([\s\S]*?)<\/name>/);
-    const name = namem ? namem[1].trim() : 'unnamed';
+    const namem = extractTaggedBlocks(tc, 'name');
+    const name = namem.length ? namem[0].trim() : 'unnamed';
     // Extract <files> entries.
-    const filesm = tc.match(/<files>((?:(?!<files>)[\s\S])*?)<\/files>/);
-    const filesText = filesm ? filesm[1] : '';
+    const filesArr = extractTaggedBlocks(tc, 'files');
+    const filesText = filesArr.length ? filesArr[0] : '';
     const files = filesText.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
     // Gate text: <verify>/<automated>/<acceptance_criteria>.
     const gateFragments: string[] = [];
-    for (const tag of ['verify', 'automated', 'acceptance_criteria']) {
-      const re = new RegExp(`<${tag}>((?:(?!<${tag}>)[\\s\\S])*?)<\\/${tag}>`, 'g');
-      let mm: RegExpExecArray | null;
-      while ((mm = re.exec(tc)) !== null) gateFragments.push(mm[1]);
-    }
+    for (const tag of ['verify', 'automated', 'acceptance_criteria']) gateFragments.push(...extractTaggedBlocks(tc, tag));
     // Requirement text: <action>/<acceptance_criteria>.
     const reqFragments: string[] = [];
-    for (const tag of ['action', 'acceptance_criteria']) {
-      const re = new RegExp(`<${tag}>((?:(?!<${tag}>)[\\s\\S])*?)<\\/${tag}>`, 'g');
-      let mm: RegExpExecArray | null;
-      while ((mm = re.exec(tc)) !== null) reqFragments.push(mm[1]);
-    }
+    for (const tag of ['action', 'acceptance_criteria']) reqFragments.push(...extractTaggedBlocks(tc, tag));
     // Strip XML tags from gate text so segments containing embedded
     // XML closing tags (e.g. <automated>cmd</automated> nested inside <verify>)
     // don't bleed into the file-path token extraction.
@@ -577,19 +564,16 @@ function cmdVerifyPlanStructure(cwd: string, filePath: string, raw: boolean): vo
     if (fm[field] === undefined) errors.push(`Missing required frontmatter field: ${field}`);
   }
 
-  const taskPattern = /<task[^>]*>([\s\S]*?)<\/task>/g;
   const tasks: Record<string, unknown>[] = [];
-  let taskMatch: RegExpExecArray | null;
-  while ((taskMatch = taskPattern.exec(content)) !== null) {
-    const taskContent = taskMatch[1];
-    const nameMatch = taskContent.match(/<name>([\s\S]*?)<\/name>/);
-    const taskName = nameMatch ? nameMatch[1].trim() : 'unnamed';
+  for (const taskContent of extractTaggedBlocks(content, 'task')) {
+    const nameArr = extractTaggedBlocks(taskContent, 'name');
+    const taskName = nameArr.length ? nameArr[0].trim() : 'unnamed';
     const hasFiles = /<files>/.test(taskContent);
     const hasAction = /<action>/.test(taskContent);
     const hasVerify = /<verify>/.test(taskContent);
     const hasDone = /<done>/.test(taskContent);
 
-    if (!nameMatch) errors.push('Task missing <name> element');
+    if (nameArr.length === 0) errors.push('Task missing <name> element');
     if (!hasAction) errors.push(`Task '${taskName}' missing <action>`);
     if (!hasVerify) warnings.push(`Task '${taskName}' missing <verify>`);
     if (!hasDone) warnings.push(`Task '${taskName}' missing <done>`);

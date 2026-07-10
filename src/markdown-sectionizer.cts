@@ -535,16 +535,43 @@ export function extractTaggedBlocks(content: string, tagName: string): string[] 
   if (typeof content !== 'string' || content.length === 0) return [];
   if (typeof tagName !== 'string' || tagName.length === 0) return [];
 
-  // Escape the tag name for safe interpolation into a RegExp.
-  const escapedTag = tagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(`<${escapedTag}>((?:(?!<${escapedTag}>)[\\s\\S])*?)</${escapedTag}>`, 'g');
-
+  const pattern = taggedBlockPattern(tagName, 'g');
   const results: string[] = [];
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(content)) !== null) {
     results.push(match[1]);
   }
   return results;
+}
+
+/**
+ * Build the single, ReDoS-safe `<tag>…</tag>` block regex shared by
+ * `extractTaggedBlocks` (extract bodies) and `stripTaggedBlocks` (remove blocks).
+ *
+ * Safety: the body uses a `(?:(?!<tag[\s>])[\s\S])*?` negative-lookahead scan
+ * that terminates at the NEXT opening `<tag>` instead of lazily rescanning the
+ * whole remaining document for a `</tag>` that may never appear — so a large
+ * document full of unclosed `<tag>` openings stays LINEAR, not quadratic
+ * (#2128). The opening tag tolerates optional attributes (`<tag foo="bar">`),
+ * bounded to 1000 chars so the attribute scan cannot itself ReDoS.
+ * Group 1 is the block body.
+ */
+function taggedBlockPattern(tagName: string, flags: string): RegExp {
+  const esc = tagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`<${esc}(?:\\s[^>]{0,1000})?>((?:(?!<${esc}[\\s>])[\\s\\S])*?)</${esc}>`, flags);
+}
+
+/**
+ * Remove every `<tagName>…</tagName>` block (opening tag, body, and closing tag)
+ * from `content`. The ReDoS-safe counterpart to `extractTaggedBlocks` — same
+ * hardened pattern, `.replace(…, '')` instead of body extraction. Case-insensitive
+ * by default (matching the `<details>` strip call sites); pass `caseSensitive`
+ * to force exact-case matching.
+ */
+export function stripTaggedBlocks(content: string, tagName: string, caseSensitive = false): string {
+  if (typeof content !== 'string' || content.length === 0) return '';
+  if (typeof tagName !== 'string' || tagName.length === 0) return content;
+  return content.replace(taggedBlockPattern(tagName, caseSensitive ? 'g' : 'gi'), '');
 }
 
 // ─── replaceSection ───────────────────────────────────────────────────────────
