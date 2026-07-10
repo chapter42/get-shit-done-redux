@@ -32,7 +32,7 @@ const {
 import planningWorkspace = require('./planning-workspace.cjs');
 const { planningDir } = planningWorkspace;
 import { platformReadSync } from './shell-command-projection.cjs';
-import { tokenizeHeadings } from './markdown-sectionizer.cjs';
+import { tokenizeHeadings, stripTaggedBlocks } from './markdown-sectionizer.cjs';
 
 // ─── Roadmap milestone scoping ───────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ import { tokenizeHeadings } from './markdown-sectionizer.cjs';
  * Strip shipped milestone content wrapped in <details> blocks.
  */
 function stripShippedMilestones(content: string): string {
-  return content.replace(/<details>[\s\S]*?<\/details>/gi, '');
+  return stripTaggedBlocks(content, 'details');
 }
 
 /**
@@ -96,10 +96,9 @@ function extractCurrentMilestone(content: string, cwd?: string): string {
         const anyMilestoneOrDetails = /^#{1,3}\s+(?!Phase\s+\S)(?:.*v\d+\.\d+|✅|📋|🚧|🔄)|<details/im;
         const firstMilestoneMatch = content.match(anyMilestoneOrDetails);
         const preambleCutoff = firstMilestoneMatch ? firstMilestoneMatch.index! : detailsOpenIdx;
-        const preamble = content.slice(0, preambleCutoff)
-          .replace(/<details>[\s\S]*?<\/details>/gi, '')
-          // #1729: `(?:\s*\([^)\n]*\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
-          .replace(/^#{2,4}\s*Phase\s+[\w][\w.-]*(?:\s*\([^)\n]*\))?\s*:[^\n]*(?:\n(?!#{1,6}\s)[^\n]*)*\n?/gim, '')
+        const preamble = stripTaggedBlocks(content.slice(0, preambleCutoff), 'details')
+          // #1729: `(?:\s*\([^)\n]{0,200}\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
+          .replace(/^#{2,4}\s*Phase\s+[\w][\w.-]*(?:\s*\([^)\n]{0,200}\))?\s*:[^\n]*(?:\n(?!#{1,6}\s)[^\n]*)*\n?/gim, '')
           .replace(/^#{1,4}\s*Phase Details\b[^\n]*\n?/gim, '');
         return preamble + content.slice(detailsOpenIdx, detailsEnd);
       }
@@ -177,10 +176,9 @@ function extractCurrentMilestone(content: string, cwd?: string): string {
     );
   }
 
-  const preamble = beforeMilestones
-    .replace(/<details>[\s\S]*?<\/details>/gi, '')
-    // #1729: `(?:\s*\([^)\n]*\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
-    .replace(/^#{2,4}\s*Phase\s+[\w][\w.-]*(?:\s*\([^)\n]*\))?\s*:[^\n]*(?:\n(?!#{1,6}\s)[^\n]*)*\n?/gim, '')
+  const preamble = stripTaggedBlocks(beforeMilestones, 'details')
+    // #1729: `(?:\s*\([^)\n]{0,200}\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
+    .replace(/^#{2,4}\s*Phase\s+[\w][\w.-]*(?:\s*\([^)\n]{0,200}\))?\s*:[^\n]*(?:\n(?!#{1,6}\s)[^\n]*)*\n?/gim, '')
     .replace(/^#{1,4}\s*Phase Details\b[^\n]*\n?/gim, '');
 
   return detailsSection
@@ -215,7 +213,7 @@ interface RoadmapPhaseResult {
 function findRoadmapPhaseInContent(content: string, phaseNum: unknown, phaseSource?: string): RoadmapPhaseResult | null {
   // #1729: OPTIONAL_PHASE_TAG_SOURCE after the number tolerates a pre-colon ( ) tag.
   const headingPattern = new RegExp(
-    `^(?:\\[[^\\]]+\\]\\s*)?Phase\\s+${phaseSource ?? phaseMarkdownRegexSource(phaseNum)}${OPTIONAL_PHASE_TAG_SOURCE}:\\s*(.+)$`,
+    `^(?:\\[[^\\]]{1,200}\\]\\s*)?Phase\\s+${phaseSource ?? phaseMarkdownRegexSource(phaseNum)}${OPTIONAL_PHASE_TAG_SOURCE}:\\s*(.+)$`,
     'i'
   );
   const headings = tokenizeHeadings(content);
@@ -370,7 +368,7 @@ function getMilestonePhaseFilter(cwd: string, versionOverride?: string | null, p
     let roadmap = extractCurrentMilestone(roadmapContent, cwd);
 
     const hasVersionedMilestonesGlobal = /^#{1,3}\s+.*v\d+\.\d+/mi.test(roadmapContent);
-    const hasPhaseHeadings = /#{2,4}\s*(?:\[[^\]]+\]\s*)?Phase\s+[\w]/i.test(roadmapContent);
+    const hasPhaseHeadings = /#{2,4}\s*(?:\[[^\]]{1,200}\]\s*)?Phase\s+[\w]/i.test(roadmapContent);
     if (!hasVersionedMilestonesGlobal && hasPhaseHeadings && phaseIdConvention === 'milestone-prefixed') {
       console.warn(
         '[gsd] Deprecated: free-form ROADMAP.md detected (no versioned milestone headings). ' +
@@ -427,8 +425,8 @@ function getMilestonePhaseFilter(cwd: string, versionOverride?: string | null, p
 
     // Use tokenizeHeadings (fence-aware) instead of stripFencedLines + regex.
     // T4 seam migration: phase headings inside fences are excluded automatically.
-    // #1729: `(?:\s*\([^)\n]*\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
-    const phaseHeadingPattern = /^(?:\[[^\]]+\]\s*)?Phase\s+([\w][\w.-]*)(?:\s*\([^)\n]*\))?\s*:/i;
+    // #1729: `(?:\s*\([^)\n]{0,200}\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
+    const phaseHeadingPattern = /^(?:\[[^\]]{1,200}\]\s*)?Phase\s+([\w][\w.-]*)(?:\s*\([^)\n]{0,200}\))?\s*:/i;
     for (const h of tokenizeHeadings(roadmap)) {
       if (h.level < 2 || h.level > 4) continue;
       const pm = phaseHeadingPattern.exec(h.text);
@@ -459,6 +457,7 @@ function getMilestonePhaseFilter(cwd: string, versionOverride?: string | null, p
   // the milestone as a bogus "46-6" id.
   const numericRe = roadmapUsesHyphenedIds
     ? /^0*(\d+(?:-\d{2,})*[A-Za-z]?(?:\.\d+)*)/
+    // phase-id-owner: the [A-Za-z] letter class does real case handling here — this regex carries NO /i flag; kept literal, not source-byte-equal to the canonical PHASE_NUMBER_TOKEN_SOURCE.
     : /^0*(\d+[A-Za-z]?(?:\.\d+)*)/;
 
   function isDirInMilestone(dirName: string): boolean {

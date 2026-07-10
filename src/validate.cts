@@ -33,7 +33,7 @@
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import phaseIdMod = require('./phase-id.cjs');
-const { OPTIONAL_PROJECT_CODE_PREFIX_SOURCE } = phaseIdMod;
+const { OPTIONAL_PROJECT_CODE_PREFIX_SOURCE, PHASE_NUMBER_TOKEN_SOURCE } = phaseIdMod;
 
 // ── Issue #26: regex constants (W005, W006-archived) ────────────────────────
 // Matches legacy numeric dirs (01-setup), milestone-prefixed dirs (02-01-setup),
@@ -62,7 +62,7 @@ export function canonicalPlanStem(stem: string): string {
   // #2043: the plan component (after the phase number) must be zero-padded
   // (≥2 digits), so a digit-leading slug word (e.g. "46-6-rs-…") is not mistaken
   // for a "46-6" phase/plan pair.
-  const m = stem.match(/^(\d+[A-Z]?(?:\.\d+)*-\d{2,})/i);
+  const m = stem.match(new RegExp(`^(${PHASE_NUMBER_TOKEN_SOURCE}-\\d{2,})`, 'i'));
   return m ? m[1] : stem;
 }
 
@@ -113,8 +113,8 @@ export function buildRoadmapPhaseVariants(roadmapContent: string): RoadmapPhaseV
   const roadmapPhaseVariants = new Set<string>();
   // Matches both legacy numeric (Phase 1:), decimal (Phase 2.1:), milestone-prefixed (Phase 2-01:),
   // and bracket-prefixed (### [GSD] Phase 2-01:) headings.
-  // #1729: `(?:\s*\([^)\n]*\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
-  const phasePattern = /#{2,4}\s*(?:\[[^\]]+\]\s*)?Phase\s+([\w][\w.-]*)(?:\s*\([^)\n]*\))?\s*:/gi;
+  // #1729: `(?:\s*\([^)\n]{0,200}\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
+  const phasePattern = /#{2,4}\s*(?:\[[^\]]{1,200}\]\s*)?Phase\s+([\w][\w.-]*)(?:\s*\([^)\n]{0,200}\))?\s*:/gi;
   let m: RegExpExecArray | null;
   while ((m = phasePattern.exec(roadmapContent)) !== null) {
     roadmapPhases.add(m[1]);

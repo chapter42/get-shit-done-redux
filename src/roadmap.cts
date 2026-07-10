@@ -126,7 +126,7 @@ function countPhasePlansAndSummaries(phaseDir: string): PhasePlansAndSummaries {
 function searchPhaseInContent(content: string, escapedPhase: string, phaseNum: string): PhaseSearchResult | null {
   // #1729: OPTIONAL_PHASE_TAG_SOURCE after the number tolerates a pre-colon ( ) tag.
   const headingPattern = new RegExp(
-    `^(?:\\[[^\\]]+\\]\\s*)?Phase\\s+${escapedPhase}${OPTIONAL_PHASE_TAG_SOURCE}:\\s*(.+)$`,
+    `^(?:\\[[^\\]]{1,200}\\]\\s*)?Phase\\s+${escapedPhase}${OPTIONAL_PHASE_TAG_SOURCE}:\\s*(.+)$`,
     'i'
   );
   const headings = tokenizeHeadings(content);
@@ -297,8 +297,9 @@ function cmdRoadmapAnalyze(cwd: string, raw: boolean): void {
   const phasesDir = planningPaths(cwd).phases;
 
   // Extract all phase headings: ## Phase N: Name or ### Phase N: Name
-  // #1729: `(?:\s*\([^)\n]*\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
-  const phasePattern = /#{2,4}\s*(?:\[[^\]]+\]\s*)?Phase\s+(\d+[A-Z]?(?:[.-]\d+)*)(?:\s*\([^)\n]*\))?\s*:\s*([^\n]+)/gi;
+  // #1729: `(?:\s*\([^)\n]{0,200}\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
+  // phase-id-owner: uses the [.-] (dot-or-dash) separator variant, not the canonical dot-only token; a swap to PHASE_NUMBER_TOKEN_SOURCE would drop hyphenated phase-id matches.
+  const phasePattern = /#{2,4}\s*(?:\[[^\]]{1,200}\]\s*)?Phase\s+(\d+[A-Z]?(?:[.-]\d+)*)(?:\s*\([^)\n]{0,200}\))?\s*:\s*([^\n]+)/gi;
   const phases: Array<{
     number: string;
     name: string;
@@ -343,7 +344,7 @@ function cmdRoadmapAnalyze(cwd: string, raw: boolean): void {
     const restOfContent = content.slice(sectionStart);
     // #3691: `\d` → `\d[\d.]*` so decimal phase headings (e.g. `### Phase 02.3:`) are
     // recognised as section boundaries.
-    const nextHeader = restOfContent.match(/\n#{2,4}\s+(?:\[[^\]]+\]\s*)?Phase\s+\d[\d.-]*/i);
+    const nextHeader = restOfContent.match(/\n#{2,4}\s+(?:\[[^\]]{1,200}\]\s*)?Phase\s+\d[\d.-]*/i);
     const sectionEnd = nextHeader ? sectionStart + nextHeader.index! : content.length;
     const section = content.slice(sectionStart, sectionEnd);
 
@@ -437,6 +438,7 @@ function cmdRoadmapAnalyze(cwd: string, raw: boolean): void {
   // The char class must allow `-` (not just `.`) so dash-separated milestone-prefixed
   // IDs (e.g. `1-01`) match the detail-heading scanner above; otherwise they truncate
   // at the dash (`1-01` -> `1`) and every such phase reports a phantom missing detail.
+  // phase-id-owner: uses the [.-] (dot-or-dash) separator variant, not the canonical dot-only token; a swap to PHASE_NUMBER_TOKEN_SOURCE would drop hyphenated phase-id matches.
   const checklistPattern = /-\s*\[[ x]\]\s*\*\*Phase\s+(\d+[A-Z]?(?:[.-]\d+)*)/gi;
   const checklistPhases = new Set<string>();
   let checklistMatch: RegExpExecArray | null;
@@ -543,7 +545,7 @@ function cmdRoadmapUpdatePlanProgress(cwd: string, phaseNum: string | null | und
     //   `**Plans:** N plans`  — bold "Plans:" (colon inside bold)
     //   `Plans: N plans`      — plain text header
     const planCountPattern = new RegExp(
-      `(#{2,4}\\s*Phase\\s+${phasePattern}${OPTIONAL_PHASE_TAG_SOURCE}(?=[:\\s])[\\s\\S]*?(?:\\*\\*Plans\\*\\*:|\\*\\*Plans:\\*\\*|(?:^|\\n)Plans:)\\s*)[^\\n]+`,
+      `(#{2,4}\\s*Phase\\s+${phasePattern}${OPTIONAL_PHASE_TAG_SOURCE}(?=[:\\s])(?:(?!\\n#{1,4}\\s)[\\s\\S])*?(?:\\*\\*Plans\\*\\*:|\\*\\*Plans:\\*\\*|(?:^|\\n)Plans:)\\s*)[^\\n]+`,
       'i'
     );
     const planCountText = isComplete
@@ -613,11 +615,11 @@ function cmdRoadmapUpdatePlanProgress(cwd: string, phaseNum: string | null | und
       // Pattern A: anchor to bare `Plans:` header (preferred).
       // Pattern B: fallback to bold summary when no bare header exists.
       const insertRowsPatternA = new RegExp(
-        `(#{2,4}\\s*Phase\\s+${phasePattern}${OPTIONAL_PHASE_TAG_SOURCE}(?=[:\\s])[\\s\\S]*?(?:^|\\n)(?:Plans:)[^\\n]*)`,
+        `(#{2,4}\\s*Phase\\s+${phasePattern}${OPTIONAL_PHASE_TAG_SOURCE}(?=[:\\s])(?:(?!\\n#{1,4}\\s)[\\s\\S])*?(?:^|\\n)(?:Plans:)[^\\n]*)`,
         'i'
       );
       const insertRowsPatternB = new RegExp(
-        `(#{2,4}\\s*Phase\\s+${phasePattern}${OPTIONAL_PHASE_TAG_SOURCE}(?=[:\\s])[\\s\\S]*?(?:\\*\\*Plans\\*\\*:|\\*\\*Plans:\\*\\*)[^\\n]*)`,
+        `(#{2,4}\\s*Phase\\s+${phasePattern}${OPTIONAL_PHASE_TAG_SOURCE}(?=[:\\s])(?:(?!\\n#{1,4}\\s)[\\s\\S])*?(?:\\*\\*Plans\\*\\*:|\\*\\*Plans:\\*\\*)[^\\n]*)`,
         'i'
       );
 
