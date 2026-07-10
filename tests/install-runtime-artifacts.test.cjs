@@ -3448,7 +3448,7 @@ describe('#443 Config-driven: effort.agent_overrides drives install-time effort'
     const tomlContent = fs.readFileSync(
       path.join(codexHome, 'agents', 'gsd-planner.toml'), 'utf8'
     );
-    assert.match(tomlContent, /^model\s*=\s*"gpt-5.5"$/m,
+    assert.match(tomlContent, /^model\s*=\s*"gpt-5.6-sol"$/m,
       `gsd-planner.toml should pin Codex model when runtime:"codex" is configured\nActual:\n${tomlContent.slice(0, 500)}`);
     assert.match(tomlContent, /^model_reasoning_effort\s*=\s*"low"$/m,
       `gsd-planner.toml should have model_reasoning_effort = "low" from config override\nActual:\n${tomlContent.slice(0, 500)}`);
@@ -3474,7 +3474,7 @@ describe('#443 Config-driven: effort.agent_overrides drives install-time effort'
     const tomlContent = fs.readFileSync(
       path.join(codexHome, 'agents', 'gsd-planner.toml'), 'utf8'
     );
-    assert.match(tomlContent, /^model\s*=\s*"gpt-5.5"$/m,
+    assert.match(tomlContent, /^model\s*=\s*"gpt-5.6-sol"$/m,
       `gsd-planner.toml should pin Codex model when runtime:"codex" is configured\nActual:\n${tomlContent.slice(0, 500)}`);
     // Codex does not support 'max' → clamped to 'xhigh'
     assert.match(tomlContent, /^model_reasoning_effort\s*=\s*"xhigh"$/m,
@@ -3559,7 +3559,7 @@ describe('#443 resolveInstallTimeEffort: invalid tokens fall through to valid ef
     const tomlContent = fs.readFileSync(
       path.join(codexHome, 'agents', 'gsd-planner.toml'), 'utf8'
     );
-    assert.match(tomlContent, /^model\s*=\s*"gpt-5.5"$/m,
+    assert.match(tomlContent, /^model\s*=\s*"gpt-5.6-sol"$/m,
       `gsd-planner.toml should pin Codex model when runtime:"codex" is configured\nActual:\n${tomlContent.slice(0, 500)}`);
     const match = tomlContent.match(/^model_reasoning_effort\s*=\s*"([^"]+)"/m);
     assert.ok(match, `model_reasoning_effort must be present in .toml\nActual:\n${tomlContent.slice(0, 500)}`);
