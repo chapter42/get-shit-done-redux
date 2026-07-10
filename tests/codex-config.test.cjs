@@ -121,7 +121,7 @@ function countMatches(content, pattern) {
 }
 
 function assertNoDraftRootKeys(content) {
-  assert.ok(!content.includes('model = "gpt-5.4"'), 'does not inject draft model default');
+  assert.ok(!content.includes('model = "gpt-5.6-terra"'), 'does not inject draft model default');
   assert.ok(!content.includes('model_reasoning_effort = "high"'), 'does not inject draft reasoning default');
   assert.ok(!content.includes('disable_response_storage = true'), 'does not inject draft storage default');
 }
