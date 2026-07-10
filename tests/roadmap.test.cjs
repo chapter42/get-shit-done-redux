@@ -2121,6 +2121,39 @@ describe('bug #2114: roadmap get-phase resolves drifted prefixed headings by bar
     assert.strictEqual(payload30.found, true);
     assert.strictEqual(payload30.phase_name, 'Plain');
   });
+
+  test('prefixed query surfaces malformed_roadmap when only a checklist entry exists (parity with bare)', () => {
+    // #2121/#2114 route all three resolvers through the shared 3-source lookup, so a
+    // project-code-prefixed query now surfaces the SAME `malformed_roadmap` diagnostic a
+    // bare numeric query always did: a `**Phase PROJ-42:**` summary line with no matching
+    // `### Phase PROJ-42:` detail heading is malformed for BOTH query forms. Before the
+    // consolidation the prefixed form silently returned `{found:false}` with no diagnostic
+    // (the exact-prefix pass discarded its malformed candidate) — this test fails on that
+    // prior behavior and locks the unified, more-informative result.
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'ROADMAP.md'),
+      [
+        '# Roadmap v1.0',
+        '',
+        '## Phases',
+        '',
+        '- [ ] **Phase PROJ-42: Checklist only, no header**',
+        '',
+      ].join('\n'),
+    );
+
+    const prefixed = runGsdTools('roadmap get-phase PROJ-42 --json', tmpDir);
+    assert.ok(prefixed.success, `command failed: ${prefixed.error || prefixed.output}`);
+    const pPayload = JSON.parse(prefixed.output);
+    assert.strictEqual(pPayload.found, false, 'malformed roadmap: phase must not be found');
+    assert.strictEqual(pPayload.error, 'malformed_roadmap', 'prefixed query must surface malformed_roadmap');
+    assert.ok(pPayload.message.includes('missing'), 'message must explain the missing detail section');
+
+    // Parity: the bare numeric form yields the same diagnostic against the same fixture.
+    const bare = runGsdTools('roadmap get-phase 42 --json', tmpDir);
+    assert.ok(bare.success, `command failed: ${bare.error || bare.output}`);
+    assert.strictEqual(JSON.parse(bare.output).error, 'malformed_roadmap', 'bare query surfaces the same diagnostic');
+  });
 });
 
 describe('roadmap annotate-dependencies', () => {

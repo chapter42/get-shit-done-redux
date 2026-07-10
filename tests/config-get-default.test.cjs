@@ -28,6 +28,10 @@ const { cleanup } = require('./helpers.cjs');
 // calling cmdConfigGet directly removes the subprocess-spawn cost and the
 // wall-clock race entirely: no timeout of any size can flake this.
 const config = require(path.join(__dirname, '..', 'gsd-core', 'bin', 'lib', 'config.cjs'));
+// io.cjs owns error()/output() and the JSON-error-mode toggle. cmdConfigGet's `error`
+// is bound to io.error at load, so we drive io directly to (a) get structured stderr
+// we can assert a typed `reason` on, and (b) restore the mode after each error probe.
+const io = require(path.join(__dirname, '..', 'gsd-core', 'bin', 'lib', 'io.cjs'));
 
 /**
  * cmdConfigGet's error() path (gsd-core/bin/lib/io.cjs) calls process.exit(1)
@@ -35,10 +39,18 @@ const config = require(path.join(__dirname, '..', 'gsd-core', 'bin', 'lib', 'con
  * entrypoint's non-error paths). Intercepting process.exit with a throwable
  * sentinel lets the error path be exercised in-process without killing the
  * test worker.
+ *
+ * The sentinel carries the ORIGINAL error message (not a generic "process.exit(1)").
+ * That matters for cmdConfigGet's "no config.json" branch, whose `error()` sits inside
+ * a try/catch that reclassifies any throw NOT starting with "No config.json" as a parse
+ * failure (a guard that is dead in production, where process.exit terminates first, but
+ * becomes live once process.exit is a throwing seam). Carrying the real message makes
+ * that guard re-throw — modeling the single, faithful production termination instead of
+ * a spurious second error() call with the wrong reason.
  */
 class _ExitSignal extends Error {
-  constructor(code) {
-    super(`process.exit(${code})`);
+  constructor(code, message) {
+    super(message ?? `process.exit(${code})`);
     this.code = code;
   }
 }
@@ -120,30 +132,53 @@ describe('config-get --default flag (#1893)', () => {
   function runExpectError(...args) {
     const { keyPath, raw, defaultValue } = parseConfigGetArgs(args);
     const origExit = process.exit;
+    const origWriteSync = fs.writeSync;
+    io.setJsonErrorMode(true); // structured stderr line lets the sentinel carry the message + assert reason
+    let exitCount = 0;
     let exitCode;
-    process.exit = (code) => {
-      exitCode = code;
-      throw new _ExitSignal(code);
+    let stderr = '';
+    fs.writeSync = (fd, ...rest) => {
+      if (fd !== 2) return origWriteSync.call(fs, fd, ...rest);
+      const [data, offset = 0, length] = rest;
+      const chunk = Buffer.isBuffer(data)
+        ? data.subarray(offset, offset + (length ?? data.length - offset)).toString('utf8')
+        : String(data);
+      stderr += chunk;
+      return Buffer.byteLength(chunk);
     };
-    let stderr;
+    const lastError = () => {
+      const parts = stderr.split('\n').filter(Boolean);
+      try { return JSON.parse(parts[parts.length - 1]); } catch { return {}; }
+    };
+    process.exit = (code) => {
+      exitCount++;
+      exitCode = code;
+      // Carry the just-emitted error message so cmdConfigGet's seam guard re-throws
+      // (single, faithful fire) instead of catching + reclassifying into a 2nd error().
+      throw new _ExitSignal(code, lastError().message);
+    };
     try {
-      stderr = captureFdWrite(2, () => {
-        try {
-          config.cmdConfigGet(tmpDir, keyPath, raw, defaultValue);
-        } catch (e) {
-          if (!(e instanceof _ExitSignal)) throw e;
-        }
-      });
+      config.cmdConfigGet(tmpDir, keyPath, raw, defaultValue);
+    } catch (e) {
+      if (!(e instanceof _ExitSignal)) throw e;
     } finally {
       process.exit = origExit;
+      fs.writeSync = origWriteSync;
+      io.setJsonErrorMode(false);
     }
     assert.ok(exitCode !== 0 && exitCode !== undefined, 'Expected non-zero exit code');
-    return { status: exitCode, stderr };
+    // Faithfulness guard: production process.exit terminates, so error() fires exactly
+    // once. A count of 2 means the throwing-exit seam was caught + reclassified (the bug
+    // this harness redesign fixes) — fail loudly rather than report a wrong reason.
+    assert.equal(exitCount, 1, 'error() must fire exactly once (production process.exit terminates)');
+    const payload = lastError();
+    return { status: exitCode, reason: payload.reason, message: payload.message, stderr };
   }
 
   test('absent key without --default errors', () => {
     fs.writeFileSync(path.join(planningDir, 'config.json'), '{}');
-    runExpectError('config-get', 'nonexistent.key', '--raw');
+    const { reason } = runExpectError('config-get', 'nonexistent.key', '--raw');
+    assert.equal(reason, io.ERROR_REASON.CONFIG_KEY_NOT_FOUND, 'absent key must report CONFIG_KEY_NOT_FOUND');
   });
 
   test('absent key with --default returns default value', () => {
@@ -182,7 +217,8 @@ describe('config-get --default flag (#1893)', () => {
 
   test('missing config.json without --default errors', () => {
     // No config.json written
-    runExpectError('config-get', 'any.key', '--raw');
+    const { reason } = runExpectError('config-get', 'any.key', '--raw');
+    assert.equal(reason, io.ERROR_REASON.CONFIG_NO_FILE, 'missing config.json must report CONFIG_NO_FILE');
   });
 
   test('--default works with JSON output (no --raw)', () => {
