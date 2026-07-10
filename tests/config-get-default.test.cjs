@@ -13,11 +13,83 @@ const { describe, test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
 const os = require('os');
 const { cleanup } = require('./helpers.cjs');
 
-const GSD_TOOLS = path.join(__dirname, '..', 'gsd-core', 'bin', 'gsd-tools.cjs');
+// In-process invocation, not execFileSync: cmdConfigGet is a pure CJS
+// function reachable without spawning `node` as a child. The prior
+// execFileSync(..., { timeout: 5000 }) raced a real subprocess's startup
+// (full node boot + gsd-tools.cjs's large eager require graph — capability
+// registry, phase/roadmap/agent/check/task routers, verify.cjs,
+// cli-skew-check, findProjectRoot, etc.) against a fixed 5s wall clock, with
+// no retry. Under Docker host contention that wall clock loses
+// nondeterministically (ETIMEDOUT) — a test-harness race, not a product
+// defect. bin/lib/config.cjs requires none of that dispatcher machinery, so
+// calling cmdConfigGet directly removes the subprocess-spawn cost and the
+// wall-clock race entirely: no timeout of any size can flake this.
+const config = require(path.join(__dirname, '..', 'gsd-core', 'bin', 'lib', 'config.cjs'));
+
+/**
+ * cmdConfigGet's error() path (gsd-core/bin/lib/io.cjs) calls process.exit(1)
+ * directly (it predates the ExitError/runMain seam used by the CLI
+ * entrypoint's non-error paths). Intercepting process.exit with a throwable
+ * sentinel lets the error path be exercised in-process without killing the
+ * test worker.
+ */
+class _ExitSignal extends Error {
+  constructor(code) {
+    super(`process.exit(${code})`);
+    this.code = code;
+  }
+}
+
+/**
+ * bin/lib/io.cjs's output()/error() write directly to the raw fd (1 or 2)
+ * via fs.writeSync — they bypass console.log entirely, so
+ * tests/helpers.cjs's captureConsole() cannot observe them (see
+ * tests/io.test.cjs: "output() writes directly to fd 1"). Monkeypatch
+ * fs.writeSync itself — save the original, override, restore in a finally,
+ * the project's standard IO capture/fault-injection seam — to capture what
+ * would have hit the fd.
+ */
+function captureFdWrite(fd, fn) {
+  const orig = fs.writeSync;
+  let captured = Buffer.alloc(0);
+  fs.writeSync = (writeFd, ...rest) => {
+    if (writeFd !== fd) return orig.call(fs, writeFd, ...rest);
+    const [data, offset = 0, length] = rest;
+    const chunk = Buffer.isBuffer(data)
+      ? data.subarray(offset, offset + (length ?? data.length - offset))
+      : Buffer.from(String(data), 'utf8');
+    captured = Buffer.concat([captured, chunk]);
+    return chunk.length;
+  };
+  try {
+    fn();
+  } finally {
+    fs.writeSync = orig;
+  }
+  return captured.toString('utf-8');
+}
+
+/**
+ * Parse a CLI-style config-get argv (mirrors gsd-core/bin/gsd-tools.cjs's
+ * 'config-get' case: key is args[1], optional --default <value>, optional
+ * --raw) into cmdConfigGet's positional params. Keeps the test bodies below
+ * expressed in the same CLI-args vocabulary they always were.
+ */
+function parseConfigGetArgs(args) {
+  const rest = args.slice(1); // drop the leading 'config-get'
+  let raw = false;
+  let defaultValue;
+  const positional = [];
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--raw') { raw = true; continue; }
+    if (rest[i] === '--default') { defaultValue = rest[i + 1] ?? ''; i++; continue; }
+    positional.push(rest[i]);
+  }
+  return { keyPath: positional[0], raw, defaultValue };
+}
 
 describe('config-get --default flag (#1893)', () => {
   let tmpDir;
@@ -34,10 +106,11 @@ describe('config-get --default flag (#1893)', () => {
   });
 
   function run(...args) {
-    return execFileSync('node', [GSD_TOOLS, ...args, '--cwd', tmpDir], {
-      encoding: 'utf-8',
-      timeout: 5000,
-    }).trim();
+    const { keyPath, raw, defaultValue } = parseConfigGetArgs(args);
+    const out = captureFdWrite(1, () => {
+      config.cmdConfigGet(tmpDir, keyPath, raw, defaultValue);
+    });
+    return out.trim();
   }
 
   function runRaw(...args) {
@@ -45,17 +118,27 @@ describe('config-get --default flag (#1893)', () => {
   }
 
   function runExpectError(...args) {
+    const { keyPath, raw, defaultValue } = parseConfigGetArgs(args);
+    const origExit = process.exit;
+    let exitCode;
+    process.exit = (code) => {
+      exitCode = code;
+      throw new _ExitSignal(code);
+    };
+    let stderr;
     try {
-      execFileSync('node', [GSD_TOOLS, ...args, '--cwd', tmpDir], {
-        encoding: 'utf-8',
-        timeout: 5000,
-        stdio: ['pipe', 'pipe', 'pipe'],
+      stderr = captureFdWrite(2, () => {
+        try {
+          config.cmdConfigGet(tmpDir, keyPath, raw, defaultValue);
+        } catch (e) {
+          if (!(e instanceof _ExitSignal)) throw e;
+        }
       });
-      assert.fail('Expected command to exit non-zero');
-    } catch (err) {
-      assert.ok(err.status !== 0, 'Expected non-zero exit code');
-      return err;
+    } finally {
+      process.exit = origExit;
     }
+    assert.ok(exitCode !== 0 && exitCode !== undefined, 'Expected non-zero exit code');
+    return { status: exitCode, stderr };
   }
 
   test('absent key without --default errors', () => {
