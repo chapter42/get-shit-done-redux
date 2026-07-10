@@ -380,12 +380,15 @@ The prompt-level data/instruction isolation seam for untrusted web/document ingr
 > Glossary prose for these modules lives above (Probe Core / Edge Probe / Prohibition Probe / Verification Tier / Verification substrate). These are the greppable one-line predicates ADR-550's Consequences promised alongside the glossary. Research-derived numbers (N17/N18 rates) are deliberately kept out of this machine-canon and live hedged in `docs/design/verifier-reach.md`. (That design note and `docs/adr/1606` are co-delivered sibling PRs of epic #1605; predicate refs to them below resolve once the batch lands.)
 
 `PROBE.principle=verifier-reach-equals-spec-reach (a goal-backward verifier only checks assertions that exist; probes make omitted assertions exist before code) — ADR-857 verification-substrate boundary; docs/design/verifier-reach.md`
-`PROBE.family=edge-probe(shape-axis)+prohibition-probe(must-NOT-axis), shared probe-core, run as spec-phase soft gates (ADR-550 D7)`
+`PROBE.family=edge-probe(shape-axis)+prohibition-probe(must-NOT-axis)+ui-consideration-probe(UI-state-axis), shared probe-core, run as spec-phase/ui-phase soft gates (ADR-550 D7; #1867)`
 `PROBE.protocol=recall(adversarial over-generate)->precision(drop routine-engineering); dismissals require a non-empty reason`
 `PROBE.core.seam=analyzeCoverage(items,resolutions?,validators) ingests ALREADY-proposed items; does NOT assume deterministic propose (ADR-550 D7b)`
 `PROBE.item.axes=status{resolved|dismissed|unresolved} x verification{<probe-defined>|null} — orthogonal; the lifecycle enum carries no verification fact (ADR-550 D7a)`
 `PROBE.edge.verification=explicit|backstop`
 `PROBE.prohib.verification=test|judgment`
+`PROBE.ui.verification=explicit|backstop`
+`PROBE.ui.axis=MIXED — closed compiled shape-rooted 8 (empty/loading/error/populated/partial/overflow/zero-one-many/long-text) via ui-consideration-probe adapter; open UX (real-time/a11y/i18n-RTL) prose-owned in references/domain-probes.md, NOT compiled (#1867)`
+`PROBE.ui.seam=ui-phase Step 9.5 post-verification: element-cue classify -> propose-then-confirm (partial-cue mitigation, Goodhart) -> autoResolve --auto floor (never dismiss; unclassified stays unresolved #1110) -> ## UI Considerations write-back -> plan-phase `## UI Considerations` lift rule (#1867)`
 `PROBE.ci.surface=the contract (parse/validate, projection round-trip, fail-closed guards), NEVER the LLM judgment (ADR-550 D5)`
 `PROHIB.recall=LLM-prose; no compiled prohibition-probe recall engine (only the schema/projection layer is code, ADR-550 D7b)`
 `PROHIB.canon-referral=OWASP/GDPR/fairness-canon are REFERRED to /gsd:secure-phase+eslint, never minted as prohibitions (ADR-550 D6)`
