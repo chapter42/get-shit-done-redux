@@ -788,7 +788,12 @@ const capabilities = {
       "installSurface": "settings-json",
       "writesSharedSettings": true,
       "permissionWriter": null,
-      "extendedHookEvents": [],
+      "extendedHookEvents": [
+        "SubagentStop",
+        "Stop",
+        "PreCompact",
+        "SubagentStart"
+      ],
       "hostIntegration": {
         "embeddingMode": "declarative",
         "commandSurface": "slash-file",
@@ -805,6 +810,9 @@ const capabilities = {
         "stateIO": "filesystem",
         "transport": "mcp",
         "runtime": "node"
+      },
+      "hostBehaviors": {
+        "reportCommandsDir": true
       }
     }
   },
@@ -4237,7 +4245,12 @@ const runtimes = {
       "installSurface": "settings-json",
       "writesSharedSettings": true,
       "permissionWriter": null,
-      "extendedHookEvents": [],
+      "extendedHookEvents": [
+        "SubagentStop",
+        "Stop",
+        "PreCompact",
+        "SubagentStart"
+      ],
       "hostIntegration": {
         "embeddingMode": "declarative",
         "commandSurface": "slash-file",
@@ -4254,6 +4267,9 @@ const runtimes = {
         "stateIO": "filesystem",
         "transport": "mcp",
         "runtime": "node"
+      },
+      "hostBehaviors": {
+        "reportCommandsDir": true
       }
     }
   },
