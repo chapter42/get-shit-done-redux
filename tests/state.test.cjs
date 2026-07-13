@@ -9557,6 +9557,197 @@ describe('bug #1445 — deriveProgressFromRoadmap excludes 999.x rows', () => {
   });
 });
 
+// ─── #2137: header-driven parse handles the milestone-grouped (5-col) table ──
+//
+// Regression for #2137: deriveProgressFromRoadmap read the `## Progress` table
+// with two 4-column-only regexes. Every project past its v1.0 milestone uses the
+// 5-column milestone-grouped shape the same template ships, so the reader (which
+// only understood 4 columns) returned { null, null, null } while the writer
+// (cmdPhaseComplete, with its explicit `cells.length === 5` branch) happily wrote
+// it — and phase.complete then silently skipped the STATE progress update. The
+// fix reads columns by NAME, so both shapes parse identically. These tests would
+// fail against the pre-fix 4-column regexes (which returned all-null for 5-col).
+
+describe('#2137 regression: deriveProgressFromRoadmap parses the milestone-grouped 5-column table', () => {
+  test("the template's own 5-column milestone-grouped Progress block parses non-null", () => {
+    // Byte-identical to gsd-core/templates/roadmap.md's "Milestone-Grouped
+    // Roadmap" Progress block — the exact shape that silently returned all-null.
+    const roadmap = [
+      '## Progress',
+      '',
+      '| Phase | Milestone | Plans Complete | Status | Completed |',
+      '|-------|-----------|----------------|--------|-----------|',
+      '| 1. Foundation | v1.0 | 3/3 | Complete | YYYY-MM-DD |',
+      '| 2. Features | v1.0 | 2/2 | Complete | YYYY-MM-DD |',
+      '| 5. Security | v1.1 | 0/2 | Not started | - |',
+    ].join('\n');
+
+    const result = deriveProgressFromRoadmap(roadmap);
+    assert.equal(result.totalPhases, 3, `totalPhases must be 3 (5-col table must parse). Got ${result.totalPhases}`);
+    assert.equal(result.completedPhases, 2, `completedPhases must be 2 (Status is column 4 in the 5-col shape). Got ${result.completedPhases}`);
+    assert.equal(result.totalPlans, 7, `totalPlans must be 3+2+2=7 (Plans is column 3 in the 5-col shape). Got ${result.totalPlans}`);
+  });
+
+  test('the 4-column greenfield and 5-column milestone-grouped shapes derive the same progress', () => {
+    // The reader must agree with the writer on both shapes the template ships.
+    const fiveCol = [
+      '## Progress',
+      '| Phase | Milestone | Plans Complete | Status | Completed |',
+      '| --- | --- | --- | --- | --- |',
+      '| 1. Foundation | v1.0 | 3/3 | Complete | 2026-01-01 |',
+      '| 2. Features | v1.0 | 2/2 | Complete | 2026-01-02 |',
+    ].join('\n');
+    const fourCol = [
+      '## Progress',
+      '| Phase | Plans Complete | Status | Completed |',
+      '| --- | --- | --- | --- |',
+      '| 1. Foundation | 3/3 | Complete | 2026-01-01 |',
+      '| 2. Features | 2/2 | Complete | 2026-01-02 |',
+    ].join('\n');
+
+    assert.deepEqual(
+      deriveProgressFromRoadmap(fiveCol),
+      deriveProgressFromRoadmap(fourCol),
+      'the milestone-grouped and greenfield shapes must derive identical progress',
+    );
+    assert.deepEqual(deriveProgressFromRoadmap(fiveCol), {
+      completedPhases: 2,
+      totalPhases: 2,
+      totalPlans: 5,
+    });
+  });
+
+  test('999.x backlog rows stay excluded in the 5-column shape', () => {
+    const roadmap = [
+      '## Progress',
+      '| Phase | Milestone | Plans Complete | Status | Completed |',
+      '| --- | --- | --- | --- | --- |',
+      '| 1. Alpha | v1.0 | 2/2 | Complete | 2026-01-01 |',
+      '| 2. Beta | v1.0 | 1/1 | Complete | 2026-01-02 |',
+      '| 999.1 Future | v2.0 | 0/0 | Backlog | - |',
+    ].join('\n');
+
+    const result = deriveProgressFromRoadmap(roadmap);
+    assert.equal(result.totalPhases, 2, `999.1 backlog row must be excluded in the 5-col shape too. Got ${result.totalPhases}`);
+    assert.equal(result.completedPhases, 2, `completedPhases must be 2. Got ${result.completedPhases}`);
+  });
+
+  test('binds to the ## Progress table, not an earlier Phase/Status/Completed-shaped table', () => {
+    // A decoy table under a different heading shares the Phase/Status/Completed
+    // header shape. The reader must scope to ## Progress (mirroring the writer's
+    // #2012 scoping) rather than binding to the first matching table it sees.
+    const roadmap = [
+      '## Retrospective',
+      '',
+      '| Phase | Owner | Status | Completed |',
+      '| --- | --- | --- | --- |',
+      '| 1. Old | jo | Complete | 2025-01-01 |',
+      '',
+      '## Progress',
+      '',
+      '| Phase | Milestone | Plans Complete | Status | Completed |',
+      '| --- | --- | --- | --- | --- |',
+      '| 1. Foundation | v1.0 | 3/3 | Complete | 2026-01-01 |',
+      '| 2. Features | v1.0 | 2/2 | Complete | 2026-01-02 |',
+      '| 3. Security | v1.1 | 0/2 | Not started | - |',
+      '',
+      '## Next',
+    ].join('\n');
+
+    const result = deriveProgressFromRoadmap(roadmap);
+    assert.equal(result.totalPhases, 3, `must count the 3 rows of the ## Progress table, not the 1-row decoy. Got ${result.totalPhases}`);
+    assert.equal(result.completedPhases, 2, `must count Complete rows in ## Progress (2), not the decoy's 1. Got ${result.completedPhases}`);
+    assert.equal(result.totalPlans, 7, `must sum the ## Progress plans (3+2+2=7). Got ${result.totalPlans}`);
+  });
+
+  test('an h3 ### Progress decoy does not hijack the h2 ## Progress scope', () => {
+    // Heading detection must be line-anchored to h2: "### Progress".indexOf("## Progress")
+    // is 1, so a substring scan would start the slice inside the h3 subheading and
+    // miss the real table below.
+    const roadmap = [
+      '### Progress notes',
+      '',
+      'Some prose about progress, no table here.',
+      '',
+      '## Progress',
+      '',
+      '| Phase | Milestone | Plans Complete | Status | Completed |',
+      '| --- | --- | --- | --- | --- |',
+      '| 1. Foundation | v1.0 | 3/3 | Complete | 2026-01-01 |',
+      '| 2. Features | v1.0 | 2/2 | Complete | 2026-01-02 |',
+    ].join('\n');
+
+    const result = deriveProgressFromRoadmap(roadmap);
+    assert.equal(result.totalPhases, 2, `h2 ## Progress table must be found past the h3 decoy. Got ${result.totalPhases}`);
+    assert.equal(result.completedPhases, 2, `completedPhases must be 2. Got ${result.completedPhases}`);
+  });
+
+  // ── Boundary conditions (#2137 review) ──────────────────────────────────────
+  // The header-driven walk terminates at the first non-`|` line and skips the
+  // separator row, so these edges must not throw and must honour the "0 → null"
+  // contract that lets the consumer leave the existing STATE value untouched.
+
+  test('header + separator only (0 data rows) derives all-null', () => {
+    const roadmap = [
+      '## Progress',
+      '',
+      '| Phase | Milestone | Plans Complete | Status | Completed |',
+      '| --- | --- | --- | --- | --- |',
+    ].join('\n');
+
+    const result = deriveProgressFromRoadmap(roadmap);
+    assert.deepEqual(
+      result,
+      { completedPhases: null, totalPhases: null, totalPlans: null },
+      `an empty table must report all-null (0 counts → null), got ${JSON.stringify(result)}`,
+    );
+  });
+
+  test('exactly one data row derives that single row', () => {
+    const roadmap = [
+      '## Progress',
+      '',
+      '| Phase | Milestone | Plans Complete | Status | Completed |',
+      '| --- | --- | --- | --- | --- |',
+      '| 1. Foundation | v1.0 | 4/4 | Complete | 2026-01-01 |',
+    ].join('\n');
+
+    const result = deriveProgressFromRoadmap(roadmap);
+    assert.deepEqual(
+      result,
+      { completedPhases: 1, totalPhases: 1, totalPlans: 4 },
+      `a single Complete row must derive {1,1,4}, got ${JSON.stringify(result)}`,
+    );
+  });
+
+  test('ragged rows (more/fewer cells than the header) are handled without throwing', () => {
+    // The reader indexes cells positionally by header name, so an EXTRA trailing
+    // column is ignored and a SHORT row simply has absent Status/Plans cells
+    // (`cells[idx] ?? ''`) — neither should throw or corrupt the well-formed row.
+    const roadmap = [
+      '## Progress',
+      '',
+      '| Phase | Milestone | Plans Complete | Status | Completed |',
+      '| --- | --- | --- | --- | --- |',
+      '| 1. Alpha | v1.0 | 2/2 | Complete | 2026-01-01 | stray-extra-column |', // 6 cells (extra)
+      '| 2. Beta | v1.0 |', // 2 cells (short: Plans/Status/Completed absent)
+    ].join('\n');
+
+    let result;
+    assert.doesNotThrow(() => {
+      result = deriveProgressFromRoadmap(roadmap);
+    }, 'ragged rows must not throw');
+    // Row 1: extra column ignored → counted, Complete, +2 plans.
+    // Row 2: short row → counted as a phase, but Status/Plans cells are absent so
+    // it is neither Complete nor plan-bearing.
+    assert.deepEqual(
+      result,
+      { completedPhases: 1, totalPhases: 2, totalPlans: 2 },
+      `ragged rows must degrade gracefully to {1,2,2}, got ${JSON.stringify(result)}`,
+    );
+  });
+});
+
 // ─── Scenario B: state json total_phases via roadmapPhaseCount ───────────────
 
 describe('bug #1445 — state json excludes 999.x phase headings from total_phases', () => {
