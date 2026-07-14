@@ -9487,13 +9487,20 @@ const { runGsdTools, createTempProject, cleanup } = require('./helpers.cjs');
 const { deriveProgressFromRoadmap } = require('../gsd-core/bin/lib/phase-lifecycle.cjs');
 
 // ─── Scenario A: deriveProgressFromRoadmap unit test ────────────────────────
+//
+// ADR-2143 (epic #2143) migrated deriveProgressFromRoadmap from position-based
+// regexes to the markdown-table schema registry (TABLE_SCHEMAS.RoadmapProgress),
+// which resolves the Progress table by exact column-name match. These fixtures'
+// second column is renamed "Plans" -> "Plans Complete" to match the canonical
+// header (gsd-core/templates/roadmap.md) the schema now requires; the assertions
+// (999.x exclusion, Complete-row counting) are unchanged.
 
 describe('bug #1445 — deriveProgressFromRoadmap excludes 999.x rows', () => {
   test('3 real phases + 1 999.x backlog row → total_phases: 3, not 4', () => {
     const roadmap = [
       '## Milestone v1.0: Test',
       '',
-      '| Phase | Plans | Status | Completed |',
+      '| Phase | Plans Complete | Status | Completed |',
       '| --- | --- | --- | --- |',
       '| 1. Alpha | 2/2 | Complete | ✅ |',
       '| 2. Beta | 1/2 | In Progress | |',
@@ -9518,7 +9525,7 @@ describe('bug #1445 — deriveProgressFromRoadmap excludes 999.x rows', () => {
     const roadmap = [
       '## Milestone v1.0: Test',
       '',
-      '| Phase | Plans | Status | Completed |',
+      '| Phase | Plans Complete | Status | Completed |',
       '| --- | --- | --- | --- |',
       '| 1. Alpha | 1/1 | Complete | ✅ |',
       '| 2. Beta | 1/1 | Complete | ✅ |',
@@ -9542,7 +9549,7 @@ describe('bug #1445 — deriveProgressFromRoadmap excludes 999.x rows', () => {
     const roadmap = [
       '## Milestone v1.0: Test',
       '',
-      '| Phase | Plans | Status | Completed |',
+      '| Phase | Plans Complete | Status | Completed |',
       '| --- | --- | --- | --- |',
       '| 999.1 Future A | 0/0 | Backlog | |',
       '| 999.2 Future B | 0/0 | Backlog | |',
@@ -9721,9 +9728,13 @@ describe('#2137 regression: deriveProgressFromRoadmap parses the milestone-group
   });
 
   test('ragged rows (more/fewer cells than the header) are handled without throwing', () => {
-    // The reader indexes cells positionally by header name, so an EXTRA trailing
-    // column is ignored and a SHORT row simply has absent Status/Plans cells
-    // (`cells[idx] ?? ''`) — neither should throw or corrupt the well-formed row.
+    // (#2242 review Fix 5 / ADR-2143 §3): deriveProgressFromRoadmap now resolves
+    // the Progress table via the markdown-table seam's parseMarkdownTable, which
+    // is fail-loud on ragged data rows by design — "ragged rows are errors, not
+    // silent" (src/markdown-table.cts) — rather than the pre-ADR-2143 reader's
+    // graceful cell-count degradation this test used to assert. A ragged row
+    // anywhere in the table now makes the WHOLE table unparseable, so the reader
+    // falls through to its existing (null) values instead of throwing.
     const roadmap = [
       '## Progress',
       '',
@@ -9737,13 +9748,10 @@ describe('#2137 regression: deriveProgressFromRoadmap parses the milestone-group
     assert.doesNotThrow(() => {
       result = deriveProgressFromRoadmap(roadmap);
     }, 'ragged rows must not throw');
-    // Row 1: extra column ignored → counted, Complete, +2 plans.
-    // Row 2: short row → counted as a phase, but Status/Plans cells are absent so
-    // it is neither Complete nor plan-bearing.
     assert.deepEqual(
       result,
-      { completedPhases: 1, totalPhases: 2, totalPlans: 2 },
-      `ragged rows must degrade gracefully to {1,2,2}, got ${JSON.stringify(result)}`,
+      { completedPhases: null, totalPhases: null, totalPlans: null },
+      `a ragged-row table must fail loud to all-null (no throw), got ${JSON.stringify(result)}`,
     );
   });
 });
