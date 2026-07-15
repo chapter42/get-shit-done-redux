@@ -93,6 +93,17 @@ node gsd-tools.cjs state-snapshot
 
 Returns JSON with: current position, phase, plan, status, decisions, blockers, metrics, last activity.
 
+### Smart Entry
+
+Read-only situation classifier used by `/gsd:next`.
+
+```bash
+node gsd-tools.cjs smart-entry          # Human summary + recommended route
+node gsd-tools.cjs smart-entry --json   # Machine-readable result for workflows
+```
+
+The JSON result contains `situation`, `recommended`, `summary`, `signals`, and ordered `actions[]`. Detection reads `.planning/STATE.md`, `ROADMAP.md`, latest verification/summary artifacts, and git status; it does not write files or dispatch commands.
+
 ---
 
 ## Phase Commands
@@ -410,13 +421,14 @@ node gsd-tools.cjs scaffold phase-dir --phase N --name "phase name"
 
 ## Init Commands (Compound Context Loading)
 
-Load all context needed for a specific workflow in one call. Returns JSON with project info, config, state, and workflow-specific data.
+Load all context needed for a specific workflow in one call. Returns JSON with project info, config, state, and workflow-specific data. `init onboard [--fast] [--text]` reports brownfield signals, planning-doc candidates, codebase-map completeness, fast-map readiness, text-mode routing, partial planning state, and onboarding summary status for `/gsd-onboard`.
 
 ```bash
 node gsd-tools.cjs init execute-phase <phase>
 node gsd-tools.cjs init plan-phase <phase>
 node gsd-tools.cjs init new-project
 node gsd-tools.cjs init new-milestone
+node gsd-tools.cjs init onboard [--fast] [--text]
 node gsd-tools.cjs init quick <description>
 node gsd-tools.cjs init resume
 node gsd-tools.cjs init verify-work <phase>
@@ -444,7 +456,7 @@ if [[ "$INIT" == @file:* ]]; then INIT=$(cat "${INIT#@file:}"); fi
 
 ```bash
 # Archive milestone
-node gsd-tools.cjs milestone complete <version> [--name <name>] [--archive-phases]
+node gsd-tools.cjs milestone complete <version> [--name <name>] [--no-archive-phases]
 
 # Mark requirements as complete
 node gsd-tools.cjs requirements mark-complete <ids>
@@ -518,6 +530,9 @@ node gsd-tools.cjs list-seeds [status]
 
 # Check file/directory existence
 node gsd-tools.cjs verify-path-exists <path>
+
+# Append a row to STATE.md's "Quick Tasks Completed" table (schema-backed; #2133)
+node gsd-tools.cjs quick-tasks-append --task "<description>"
 
 # Aggregate all SUMMARY.md data
 node gsd-tools.cjs history-digest

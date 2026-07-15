@@ -9,14 +9,19 @@
 
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+import coreUtils = require('./core-utils.cjs');
+const { countMatchedSummaries } = coreUtils;
 
 // Excluded derivative files
 const PLAN_OUTLINE_RE = /-OUTLINE\.md$/i;
 const PLAN_PRE_BOUNCE_RE = /\.pre-bounce\.md$/i;
+const PLAN_REVIEW_RE = /-PLAN-REVIEW\.md$/i;
 
 function isRootPlanFile(fileName: string): boolean {
   if (PLAN_OUTLINE_RE.test(fileName)) return false;
   if (PLAN_PRE_BOUNCE_RE.test(fileName)) return false;
+  if (PLAN_REVIEW_RE.test(fileName)) return false;
   if (fileName.endsWith('-PLAN.md') || fileName === 'PLAN.md') return true;
   // A summary is never a plan. Reject summaries before the loose /PLAN/i
   // fallback so legacy `<N>-PLAN-<NN>-SUMMARY.md` names (which contain the
@@ -82,7 +87,12 @@ function scanPhasePlans(phaseDir: string): PhaseScanResult {
   const planFiles = rootPlanFiles.concat(nestedPlanFiles);
   const summaryFiles = rootSummaryFiles.concat(nestedSummaryFiles);
   const planCount = planFiles.length;
-  const summaryCount = summaryFiles.length;
+  // Count only summaries that are the PLAN→SUMMARY partner of an existing plan
+  // (#1988): stray non-plan summaries (e.g. 30-FIX-CR02-SUMMARY.md,
+  // 30-GAPCLOSURE-SUMMARY.md) must not inflate summary_count or flip a phase to
+  // Complete when plans are still missing summaries. summaryFiles (the array)
+  // still holds every summary on disk for callers that read/list them.
+  const summaryCount = countMatchedSummaries(planFiles, summaryFiles);
 
   return {
     planCount,

@@ -14,28 +14,77 @@ import planningWorkspace = require('./planning-workspace.cjs');
 import frontmatterMod = require('./frontmatter.cjs');
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- state.cjs is an export= CommonJS module
 import stateMod = require('./state.cjs');
-import { platformWriteSync, platformEnsureDir, execGit } from './shell-command-projection.cjs';
+import { platformWriteSync, platformEnsureDir, execGit, retryRenameSync } from './shell-command-projection.cjs';
 import { formatGsdSlash, resolveRuntime } from './runtime-slash.cjs';
+import { realClock } from './clock.cjs';
+import { transitionCore } from './state-transition.cjs';
+import { writeSetComplete } from './write-set.cjs';
+import type { WriteSet } from './write-set.cjs';
+import { updateTableCell } from './markdown-table.cjs';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import ioMod = require('./io.cjs');
 const { output, error } = ioMod;
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import phaseIdMod = require('./phase-id.cjs');
-const { escapeRegex, normalizePhaseName, phaseTokenMatches } = phaseIdMod;
+const { escapeRegex, normalizePhaseName, phaseTokenMatches, PHASE_NUMBER_TOKEN_SOURCE } = phaseIdMod;
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import roadmapParserMod = require('./roadmap-parser.cjs');
-const { getMilestonePhaseFilter, extractCurrentMilestone } = roadmapParserMod;
+const { getMilestonePhaseFilter, extractCurrentMilestone, getMilestoneInfo } = roadmapParserMod;
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import coreUtilsMod = require('./core-utils.cjs');
 const { extractOneLinerFromBody } = coreUtilsMod;
 const { planningPaths } = planningWorkspace;
 const { extractFrontmatter } = frontmatterMod;
-const { writeStateMd, stateReplaceFieldWithFallback } = stateMod;
+const { writeStateMd } = stateMod;
 
 interface MilestoneCompleteOptions {
   name?: string;
   force?: boolean;
   archivePhases?: boolean;
+  dryRun?: boolean;
+}
+
+/**
+ * Scope an `updateTableCell` call to the `## Traceability` (or
+ * `## Traceability Status`) heading's own section — up to the next H1/H2
+ * heading — instead of handing it the WHOLE REQUIREMENTS.md content.
+ *
+ * F1 (#2245 review, BLOCKER): `updateTableCell` binds to the FIRST GFM table
+ * found in whatever text it is given. The shipped requirements template
+ * (gsd-core/templates/requirements.md) puts an `## Out of Scope` table
+ * (`| Feature | Reason |`, no `Status` column) BEFORE `## Traceability` — so
+ * an unscoped whole-file call targets the Out-of-Scope table instead, fails
+ * with `{ok:false, reason:'unknown column: Status'}`, and the real
+ * Traceability row is never flipped, while the checkbox surface still flips
+ * and the command reports success (the #2140 silent-divergence class one
+ * level deeper). Mirrors phase.cts's `editProgressHeadingSlice` scoping of
+ * `## Progress` writes to that heading's own slice.
+ *
+ * Falls back to running `updateTableCell` against the whole `text` when no
+ * `## Traceability` heading exists — matching the previous (unscoped)
+ * behaviour for a REQUIREMENTS.md whose traceability table sits under some
+ * other heading, or with no heading at all (never worse than before this fix).
+ */
+function updateTraceabilityCell(
+  text: string,
+  match: (row: Record<string, string>, index: number) => boolean,
+  column: string,
+  newValue: string | ((current: string) => string),
+): ReturnType<typeof updateTableCell> {
+  const headingMatch = text.match(/^##[ \t]+Traceability(?:[ \t]+Status)?\b/im);
+  if (!headingMatch || headingMatch.index === undefined) {
+    return updateTableCell(text, match, column, newValue);
+  }
+  const headingOffset = headingMatch.index;
+  const before = text.slice(0, headingOffset);
+  const fromHeading = text.slice(headingOffset);
+  const nextHeadingOffset = fromHeading.search(/\n#{1,2}[ \t]/);
+  const scoped = nextHeadingOffset >= 0 ? fromHeading.slice(0, nextHeadingOffset) : fromHeading;
+  const after = nextHeadingOffset >= 0 ? fromHeading.slice(nextHeadingOffset) : '';
+
+  const result = updateTableCell(scoped, match, column, newValue);
+  if (!result.ok) return result;
+  return { ok: true, value: before + result.value + after };
 }
 
 function cmdRequirementsMarkComplete(cwd: string, reqIdsRaw: string[], raw: boolean): void {
@@ -65,41 +114,117 @@ function cmdRequirementsMarkComplete(cwd: string, reqIdsRaw: string[], raw: bool
   const updated: string[] = [];
   const alreadyComplete: string[] = [];
   const notFound: string[] = [];
+  // #2140: IDs reconciled on the checkbox surface only — a traceability table
+  // exists but has no row for the ID. Without this bucket the payload for a
+  // partial reconcile is byte-identical to a full one, and audit-milestone (which
+  // reads the table) still sees Pending while the CLI reported success.
+  const tableUnmatched: string[] = [];
+
+  // A traceability table is present if the file has a requirement-ID column
+  // header: "Requirement", "Requirement ID", or "REQ-ID" (#2769/#2203) — kept
+  // in sync with the positional first-cell rowMatch/hasRow below so a
+  // REQ-ID-headed table (the real-world format) participates in the
+  // write-set and the #2140 drift check below, not just the "Requirement"
+  // case. A REQUIREMENTS.md with no such table is legitimate (mid-roadmap),
+  // so a missing row only counts as drift when a table actually exists.
+  const hasTable = /^\|\s*(?:Requirement(?:\s*ID)?|REQ[-\s]?ID)\s*\|/im.test(reqContent);
+
+  // ADR-2143 §6 per-surface write-set, tracked PER requirement ID: a
+  // multi-ID batch must not OR one ID's surface outcome into another's —
+  // that is the exact #2140 class one level up (an ID whose traceability
+  // row is absent/unmatched must not have its partial write masked by a
+  // different ID in the same invocation that fully reconciled). Reported
+  // additively as `write_set` below — it does not change the existing
+  // marked_complete/already_complete/not_found/table_unmatched/updated
+  // computation, which stays byte-for-behaviour identical (#2140's tactical
+  // fix already surfaces the checkbox-only-partial-write case via
+  // table_unmatched; this only adds the structured ADR-2143 shape on top).
+  const writeSet: WriteSet = [];
 
   for (const reqId of reqIds) {
-    let found = false;
     const reqEscaped = escapeRegex(reqId);
 
-    // Update checkbox: - [ ] **REQ-ID** → - [x] **REQ-ID**
-    // Use replace() directly and compare — avoids test()+replace() global regex
+    // Surface 1 — the checkbox: - [ ] **REQ-ID** → - [x] **REQ-ID**
+    // Use replace() + compare to avoid the test()+replace() global regex
     // lastIndex bug where test() advances state and replace() misses matches.
     const checkboxPattern = new RegExp(`(-\\s*\\[)[ ](\\]\\s*\\*\\*${reqEscaped}\\*\\*)`, 'gi');
     const afterCheckbox = reqContent.replace(checkboxPattern, '$1x$2');
-    if (afterCheckbox !== reqContent) {
-      reqContent = afterCheckbox;
-      found = true;
-    }
+    const checkboxHit = afterCheckbox !== reqContent;
+    if (checkboxHit) reqContent = afterCheckbox;
 
-    // Update traceability table: | REQ-ID | Phase N | Pending | → | REQ-ID | Phase N | Complete |
-    const tablePattern = new RegExp(`(\\|\\s*${reqEscaped}\\s*\\|[^|]+\\|)\\s*Pending\\s*(\\|)`, 'gi');
-    const afterTable = reqContent.replace(tablePattern, '$1 Complete $2');
-    if (afterTable !== reqContent) {
-      reqContent = afterTable;
-      found = true;
-    }
-
-    if (found) {
-      updated.push(reqId);
-    } else {
-      // Check if already complete before declaring not_found.
-      // Non-global flag is fine here — we only need to know if a match exists.
-      const doneCheckbox = new RegExp(`-\\s*\\[x\\]\\s*\\*\\*${reqEscaped}\\*\\*`, 'i');
-      const doneTable = new RegExp(`\\|\\s*${reqEscaped}\\s*\\|[^|]+\\|\\s*Complete\\s*\\|`, 'i');
-      if (doneCheckbox.test(reqContent) || doneTable.test(reqContent)) {
-        alreadyComplete.push(reqId);
-      } else {
-        notFound.push(reqId);
+    // Surface 2 — the traceability row: | <REQ-ID> | Phase N | Pending | → ... Complete |
+    // via the markdown-table seam (ADR-2143 §7) — supersedes the prior ordinal
+    // regex. Match the row by its FIRST cell's value (the requirement-ID column)
+    // regardless of that column's HEADER name — real tables head it `REQ-ID`,
+    // others `Requirement` (#2769/#2203); this mirrors the prior regex's first-cell
+    // `\|\s*<id>\s*\|` anchor. Object.values(row) is in header order so [0] is the
+    // first column. Case-insensitive (mirrors the prior regex's 'i' flag).
+    const rowMatch = (row: Record<string, string>): boolean =>
+      (Object.values(row)[0] ?? '').trim().toLowerCase() === reqId.toLowerCase();
+    // Ragged-tolerant (#2245 Blocker 2): drive the write purely off
+    // updateTableCell's own tolerant row scan — a DIFFERENT requirement's row
+    // elsewhere in the same table having a mismatched cell count must never
+    // silently no-op THIS requirement's write. The "only flip Pending ->
+    // Complete" gate is folded into the newValue callback so one
+    // updateTableCell call both probes the current value and writes.
+    let tableHit = false;
+    const tableUpdate = updateTraceabilityCell(reqContent, rowMatch, 'Status', (current) => {
+      if (/^pending$/i.test(current.trim())) {
+        tableHit = true;
+        return ' Complete ';
       }
+      return current;
+    });
+    if (tableUpdate.ok) {
+      reqContent = tableUpdate.value;
+    }
+
+    // ADR-2143 §6 per-ID write-set entries: this ID's checkbox surface is
+    // always tracked; the traceability surface is tracked only when the file
+    // has a traceability table at all (same `hasTable` gate the existing
+    // required-surface logic below uses) — omitted entirely, not a false
+    // `applied:false`, when no table is required of this file.
+    writeSet.push({ requirement: reqId, surface: 'checkbox', applied: checkboxHit });
+    if (hasTable) {
+      writeSet.push({ requirement: reqId, surface: 'traceability', applied: tableHit });
+    }
+
+    // Coverage of the traceability surface for this ID (computed after any flip).
+    // hasRow keys on the ID's FIRST cell (the requirement-ID column, by position —
+    // see rowMatch above) so a bare mention of the ID in a non-traceability table
+    // does not masquerade as a real row.
+    // Ragged-tolerant (#2245 Blocker 2): same reasoning as the write above — a
+    // sibling row's raggedness must not blind this classification to a row
+    // that genuinely exists. Probe via a no-op updateTableCell write (its own
+    // tolerant scan) instead of findTableWithColumns (whole-table parse gate).
+    let currentStatusCell = '';
+    const statusProbe = updateTraceabilityCell(reqContent, rowMatch, 'Status', (current) => {
+      currentStatusCell = current;
+      return current;
+    });
+    const hasRow = statusProbe.ok;
+    const doneCheckbox = new RegExp(`-\\s*\\[x\\]\\s*\\*\\*${reqEscaped}\\*\\*`, 'i').test(reqContent);
+    const doneTable = Boolean(hasRow && /^complete$/i.test(currentStatusCell.trim()));
+
+    if (checkboxHit || tableHit) {
+      updated.push(reqId);
+    } else if (doneTable || (doneCheckbox && !hasTable)) {
+      // Fully reconciled: the table row is Complete, OR the checkbox is done and
+      // there is no table to reconcile against. (A [x] checkbox with a Pending or
+      // absent row is NOT fully reconciled when a table exists — #2140.)
+      alreadyComplete.push(reqId);
+    } else if (!doneCheckbox && !doneTable) {
+      notFound.push(reqId);
+    }
+    // else: doneCheckbox && hasTable && !doneTable — partially reconciled. It is
+    // neither updated, already_complete, nor not_found; the table_unmatched bucket
+    // below carries the truthful partial-reconcile signal.
+
+    // Surface traceability drift: checkbox reconciled (this run or before) but the
+    // table has no row for this ID. This is what makes a partial reconcile
+    // distinguishable from a full one (#2140).
+    if (hasTable && doneCheckbox && !hasRow) {
+      tableUnmatched.push(reqId);
     }
   }
 
@@ -107,13 +232,27 @@ function cmdRequirementsMarkComplete(cwd: string, reqIdsRaw: string[], raw: bool
     platformWriteSync(reqPath, reqContent);
   }
 
+  // ADR-2143 §6: `writeSet` above already carries one WriteOutcome per
+  // (requirement, surface) this invocation could have written to — per ID,
+  // not ORed across the batch. `write_set` and `write_set_complete` are
+  // additive: they do not replace or gate `updated` / `marked_complete` /
+  // `already_complete` / `not_found` / `table_unmatched`, which remain
+  // computed exactly as before (see #2140 note above — that fix already
+  // surfaces a checkbox-only partial write via `table_unmatched`;
+  // `write_set_complete` is a structured, ADR-2143-shaped read of the SAME
+  // per-surface, per-ID facts, `false` if ANY id's ANY required surface did
+  // not apply, since `writeSetComplete` requires EVERY entry to have
+  // applied, never an OR across surfaces OR across IDs).
   output(
     {
       updated: updated.length > 0,
       marked_complete: updated,
       already_complete: alreadyComplete,
       not_found: notFound,
+      table_unmatched: tableUnmatched,
       total: reqIds.length,
+      write_set: writeSet,
+      write_set_complete: writeSetComplete(writeSet),
     },
     raw,
     `${updated.length}/${reqIds.length} requirements marked complete`,
@@ -128,14 +267,21 @@ function cmdMilestoneComplete(cwd: string, version: string, options: MilestoneCo
   const roadmapPath = planningPaths(cwd).roadmap;
   const reqPath = planningPaths(cwd).requirements;
   const statePath = planningPaths(cwd).state;
-  const milestonesPath = path.join(cwd, '.planning', 'MILESTONES.md');
-  const archiveDir = path.join(cwd, '.planning', 'milestones');
+  // #1911: derive the archive base from the workstream-aware planning root so
+  // `milestone complete --ws` archives into the workstream, not root. planningPaths(cwd).planning
+  // resolves to the workstream base when GSD_WORKSTREAM is set and to root .planning otherwise
+  // (flat mode is a no-op).
+  const planningBase = planningPaths(cwd).planning;
+  const milestonesPath = path.join(planningBase, 'MILESTONES.md');
+  const archiveDir = path.join(planningBase, 'milestones');
   const phasesDir = planningPaths(cwd).phases;
-  const today = new Date().toISOString().split('T')[0];
+  const today = realClock.localToday();
   const milestoneName = options.name || version;
 
-  // Ensure archive directory exists
-  platformEnsureDir(archiveDir);
+  // Ensure archive directory exists (skipped in dry-run — no mutations)
+  if (!options.dryRun) {
+    platformEnsureDir(archiveDir);
+  }
 
   // Scope stats and accomplishments to only the phases belonging to the
   // current milestone's ROADMAP.  Uses the shared filter from roadmap-parser.cjs
@@ -169,7 +315,8 @@ function cmdMilestoneComplete(cwd: string, version: string, options: MilestoneCo
       if (stateVersion && stateVersion === version) {
         const roadmapContent = fs.readFileSync(roadmapPath, 'utf-8');
         const scopedContent = extractCurrentMilestone(roadmapContent, cwd);
-        const phasePattern = /#{2,4}\s*Phase\s+(\d+[A-Z]?(?:\.\d+)*)\s*:\s*([^\n]+)/gi;
+        // #1729: `(?:\s*\([^)\n]{0,200}\))?` tolerates a pre-colon ( ) tag (literal mirror of OPTIONAL_PHASE_TAG_SOURCE).
+        const phasePattern = new RegExp(`#{2,4}\\s*Phase\\s+(${PHASE_NUMBER_TOKEN_SOURCE})(?:\\s*\\([^)\\n]{0,200}\\))?\\s*:\\s*([^\\n]+)`, 'gi');
         const noDirectoryPhases: string[] = [];
         let pm: RegExpExecArray | null;
         const phaseDirEntries = ((): string[] => {
@@ -259,12 +406,61 @@ function cmdMilestoneComplete(cwd: string, version: string, options: MilestoneCo
             totalTasks += xmlTaskMatches.length || mdTaskMatches.length;
           }
         } catch {
-          /* intentionally empty */
+          /* best-effort (#2245 audit): one unreadable/malformed SUMMARY.md
+           * must not abort the accomplishments/task-count roll-up for every
+           * OTHER summary across every OTHER phase — it's simply excluded
+           * from the milestone's shipped-summary text. */
         }
       }
     }
   } catch {
-    /* intentionally empty */
+    /* best-effort (#2245 audit): mirrors the phaseDirEntries IIFE a few
+     * lines below this function (same phasesDir, same "try readdirSync,
+     * tolerate ENOENT" pattern) — phasesDir may legitimately not exist yet
+     * (e.g. milestone being force-completed before any phase directories
+     * were created). Degrades stats to phaseCount/totalPlans/totalTasks=0,
+     * accomplishments=[] rather than crash `milestone complete`. */
+  }
+
+  // #2118: --dry-run preview — compute what WOULD happen without mutating.
+  // The stats above are read-only; all mutations start at the archive section below.
+  if (options.dryRun) {
+    const phaseDirsToArchive: string[] = [];
+    if (options.archivePhases !== false) {
+      try {
+        const entries = fs.readdirSync(phasesDir, { withFileTypes: true });
+        for (const e of entries) {
+          if (e.isDirectory() && isDirInMilestone(e.name)) {
+            phaseDirsToArchive.push(e.name);
+          }
+        }
+      } catch { /* phasesDir missing — nothing to archive */ }
+    }
+    const dryRunResult = {
+      dry_run: true,
+      version,
+      name: milestoneName,
+      stats: { phases: phaseCount, plans: totalPlans, tasks: totalTasks },
+      accomplishments,
+      would_archive: {
+        roadmap: fs.existsSync(roadmapPath)
+          ? { source: path.relative(cwd, roadmapPath).split(path.sep).join('/'), target: path.relative(cwd, path.join(archiveDir, `${version}-ROADMAP.md`)).split(path.sep).join('/') }
+          : null,
+        requirements: fs.existsSync(reqPath)
+          ? { source: path.relative(cwd, reqPath).split(path.sep).join('/'), target: path.relative(cwd, path.join(archiveDir, `${version}-REQUIREMENTS.md`)).split(path.sep).join('/') }
+          : null,
+        audit: fs.existsSync(path.join(planningBase, `${version}-MILESTONE-AUDIT.md`))
+          ? { source: path.relative(cwd, path.join(planningBase, `${version}-MILESTONE-AUDIT.md`)).split(path.sep).join('/'), target: path.relative(cwd, path.join(archiveDir, `${version}-MILESTONE-AUDIT.md`)).split(path.sep).join('/') }
+          : null,
+        phases: phaseDirsToArchive,
+      },
+      would_update: {
+        milestones_md: path.relative(cwd, milestonesPath).split(path.sep).join('/'),
+        state_md: fs.existsSync(statePath) ? path.relative(cwd, statePath).split(path.sep).join('/') : null,
+      },
+    };
+    output(dryRunResult, raw);
+    return;
   }
 
   // Archive ROADMAP.md
@@ -276,14 +472,20 @@ function cmdMilestoneComplete(cwd: string, version: string, options: MilestoneCo
   // Archive REQUIREMENTS.md
   if (fs.existsSync(reqPath)) {
     const reqContent = fs.readFileSync(reqPath, 'utf-8');
-    const archiveHeader = `# Requirements Archive: ${version} ${milestoneName}\n\n**Archived:** ${today}\n**Status:** SHIPPED\n\nFor current requirements, see \`.planning/REQUIREMENTS.md\`.\n\n---\n\n`;
+    // Derive the display path from the same source the writer uses (reqPath), so a
+    // workstream archive header points at `.planning/workstreams/<ws>/REQUIREMENTS.md`
+    // instead of the hardcoded root path (#1993). Root case is byte-identical.
+    // Normalize to POSIX separators so the header is cross-platform (Windows
+    // path.relative yields backslashes; the original literal was forward-slash).
+    const reqDisplay = path.relative(cwd, reqPath).split(path.sep).join('/');
+    const archiveHeader = `# Requirements Archive: ${version} ${milestoneName}\n\n**Archived:** ${today}\n**Status:** SHIPPED\n\nFor current requirements, see \`${reqDisplay}\`.\n\n---\n\n`;
     platformWriteSync(path.join(archiveDir, `${version}-REQUIREMENTS.md`), archiveHeader + reqContent);
   }
 
   // Archive audit file if exists
-  const auditFile = path.join(cwd, '.planning', `${version}-MILESTONE-AUDIT.md`);
+  const auditFile = path.join(planningBase, `${version}-MILESTONE-AUDIT.md`);
   if (fs.existsSync(auditFile)) {
-    fs.renameSync(auditFile, path.join(archiveDir, `${version}-MILESTONE-AUDIT.md`));
+    retryRenameSync(auditFile, path.join(archiveDir, `${version}-MILESTONE-AUDIT.md`));
   }
 
   // Create/append MILESTONES.md entry
@@ -311,65 +513,56 @@ function cmdMilestoneComplete(cwd: string, version: string, options: MilestoneCo
     platformWriteSync(milestonesPath, `# Milestones\n\n${milestoneEntry}`);
   }
 
-  // Update STATE.md — keep frontmatter/body semantically aligned after closure
+  // Update STATE.md — keep frontmatter/body semantically aligned after closure.
+  // ADR-1769 Phase 5: dispatches to the STATE.md Transition Module. The closure
+  // write (Status, Last Activity, Last Activity Description, Current Position
+  // reset, Operator Next Steps reset) is the pure `milestoneCompleteCore` in
+  // src/state-transition.cts, backed by the field-classification table. The
+  // runtime-specific next-milestone slash command is resolved here and injected
+  // via the intent so the core stays pure. writeStateMd still owns the lock and
+  // the steady-state syncStateFrontmatter post-sync.
   if (fs.existsSync(statePath)) {
-    let stateContent = fs.readFileSync(statePath, 'utf-8');
-
-    stateContent = stateReplaceFieldWithFallback(stateContent, 'Status', null, `${version} milestone complete`);
-    stateContent = stateReplaceFieldWithFallback(stateContent, 'Last Activity', 'Last activity', today);
-    stateContent = stateReplaceFieldWithFallback(
-      stateContent,
-      'Last Activity Description',
-      null,
-      `${version} milestone completed and archived`,
+    const result = transitionCore(
+      fs.readFileSync(statePath, 'utf-8'),
+      {
+        kind: 'milestoneComplete',
+        version,
+        nextMilestoneCommand: formatGsdSlash('new-milestone', resolveRuntime(cwd)) as string,
+      },
+      { clock: realClock, progressProvider: () => null },
     );
-
-    // Reset Current Position narrative so resume/progress flows do not keep
-    // pointing at closed-phase execution instructions.
-    const positionPattern = /(##\s*Current Position\s*\n)([\s\S]*?)(?=\n##|$)/i; // allow-adhoc-markdown: pre-seam section write-modify in milestone.cts; pending collectSection migration #1372
-    const closedPositionBody =
-      `\nPhase: Milestone ${version} complete\n` +
-      `Plan: —\n` +
-      `Status: Awaiting next milestone\n` +
-      `Last activity: ${today} — Milestone ${version} completed and archived\n\n`;
-    if (positionPattern.test(stateContent)) {
-      stateContent = stateContent.replace(positionPattern, (_m, header: string) => `${header}${closedPositionBody}`);
-    } else {
-      stateContent = `${stateContent.trimEnd()}\n\n## Current Position\n${closedPositionBody}`;
-    }
-
-    // Normalize operator-next-step tails that can become stale after close.
-    const operatorPattern = /(##\s*Operator Next Steps\s*\n)([\s\S]*?)(?=\n##|$)/i; // allow-adhoc-markdown: pre-seam section write-modify in milestone.cts; pending collectSection migration #1372
-    if (operatorPattern.test(stateContent)) {
-      stateContent = stateContent.replace(
-        operatorPattern,
-        `$1\n- Start the next milestone with ${formatGsdSlash('new-milestone', resolveRuntime(cwd)) as string}\n\n`,
-      );
-    } else {
-      stateContent = `${stateContent.trimEnd()}\n\n## Operator Next Steps\n\n- Start the next milestone with ${formatGsdSlash('new-milestone', resolveRuntime(cwd)) as string}\n`;
-    }
-
-    writeStateMd(statePath, stateContent, cwd);
+    writeStateMd(statePath, result.content, cwd);
   }
 
   // Archive phase directories if requested
   let phasesArchived = false;
-  if (options.archivePhases) {
+  // #1871: archive phase dirs by default on milestone complete (opt out via --no-archive-phases).
+  if (options.archivePhases !== false) {
+    // #2245 audit (was ERROR-HIDING): retryRenameSync moves one phase dir at a
+    // time — a mid-loop failure (e.g. the Nth rename) used to leave
+    // `phasesArchived` at its `false` default even though the first N-1 dirs
+    // had ALREADY been moved to phaseArchiveDir on disk, silently
+    // under-reporting a real partial archive in the JSON result. archivedCount
+    // is now computed in a `finally` so it reflects whatever succeeded before
+    // any failure, instead of being lost with the swallowed exception.
+    let archivedCount = 0;
     try {
       const phaseArchiveDir = path.join(archiveDir, `${version}-phases`);
       platformEnsureDir(phaseArchiveDir);
 
       const phaseEntries = fs.readdirSync(phasesDir, { withFileTypes: true });
       const phaseDirNames = phaseEntries.filter((e) => e.isDirectory()).map((e) => e.name);
-      let archivedCount = 0;
       for (const dir of phaseDirNames) {
         if (!isDirInMilestone(dir)) continue;
-        fs.renameSync(path.join(phasesDir, dir), path.join(phaseArchiveDir, dir));
+        retryRenameSync(path.join(phasesDir, dir), path.join(phaseArchiveDir, dir));
         archivedCount++;
       }
-      phasesArchived = archivedCount > 0;
     } catch {
-      /* intentionally empty */
+      /* best-effort: phasesDir may not exist yet, or the archive rename loop
+       * failed partway — phasesArchived below still reflects whatever
+       * archivedCount succeeded before the failure. */
+    } finally {
+      phasesArchived = archivedCount > 0;
     }
   }
 
@@ -453,10 +646,8 @@ function cmdPhasesClear(cwd: string, raw: boolean, args: string[]): void {
     }
 
     try {
-      for (const entry of dirs) {
-        fs.rmSync(path.join(phasesDir, entry.name), { recursive: true, force: true });
-        cleared++;
-      }
+      // #1871: archive phase directories instead of destroying them (shared helper).
+      cleared = archivePhaseDirectories(cwd, phasesDir, dirs).archived;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       error('Failed to clear phases directory: ' + message);
@@ -464,6 +655,40 @@ function cmdPhasesClear(cwd: string, raw: boolean, args: string[]): void {
   }
 
   output({ cleared }, raw, `${cleared} phase director${cleared === 1 ? 'y' : 'ies'} cleared`);
+}
+
+/**
+ * #1871: move each non-999 phase directory under `phasesDir` into
+ * `milestones/<version>-phases/` (collision-safe; version from getMilestoneInfo,
+ * timestamp fallback). Shared by `phases clear` (archive-then-remove) and the
+ * internal milestone.complete phase archival so phase history survives a
+ * milestone switch instead of being hard-deleted.
+ */
+function archivePhaseDirectories(cwd: string, phasesDir: string, dirs: ReadonlyArray<{ name: string }>): { archiveDir: string; archived: number } {
+  let archiveVersion: string | null = null;
+  try {
+    archiveVersion = getMilestoneInfo(cwd).version ?? null;
+  } catch {
+    /* ROADMAP/STATE unreadable — fall back to a dated label */
+  }
+  if (!archiveVersion) {
+    archiveVersion = `archived-${new Date().toISOString().replace(/[-:T]/g, '').slice(0, 8)}`;
+  }
+  const archivePhasesDir = path.join(planningPaths(cwd).planning, 'milestones', `${archiveVersion}-phases`);
+  platformEnsureDir(archivePhasesDir);
+  let archived = 0;
+  for (const entry of dirs) {
+    const src = path.join(phasesDir, entry.name);
+    // Collision-safe: if a same-named archive entry exists (re-run), suffix it.
+    let dest = path.join(archivePhasesDir, entry.name);
+    let n = 1;
+    while (fs.existsSync(dest)) {
+      dest = path.join(archivePhasesDir, `${entry.name}.${n++}`);
+    }
+    retryRenameSync(src, dest);
+    archived++;
+  }
+  return { archiveDir: archivePhasesDir, archived };
 }
 
 export = {

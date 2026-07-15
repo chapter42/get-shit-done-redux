@@ -19,27 +19,66 @@ import fs from 'node:fs';
 import childProcess from 'node:child_process';
 
 /**
+ * Convert a filesystem path to POSIX form (forward slashes) by translating the
+ * platform-native separator. Single seam for native→POSIX conversion.
+ *
+ * Prefer this over `p.replace(/\\/g, '/')`: the regex form hardcodes both
+ * separators and corrupts POSIX paths containing a literal backslash (a legal
+ * filename character). Splitting on `path.sep` only ever touches real
+ * separators — a no-op on POSIX, `\`→`/` on Windows.
+ */
+export function toPosixPath(p: string): string {
+  return p.split(path.sep).join(path.posix.sep);
+}
+
+/**
+ * Convert a filesystem path to the platform-native separator form. No-op on
+ * POSIX; `/`→`\` on Windows. Prefer this over a
+ * `process.platform === 'win32' ? p.replace(/\//g, '\\') : p` ternary.
+ */
+export function toNativePath(p: string): string {
+  return p.split(path.posix.sep).join(path.sep);
+}
+
+/**
+ * Normalize ALL backslashes to forward slashes, unconditionally and independent
+ * of the running OS. Use this when emitting a path into a POSIX/bash target
+ * (which may differ from the running platform — e.g. generating a Windows config
+ * on a Linux runner) or when parsing input whose separators are unpredictable.
+ *
+ * Contrast `toPosixPath`, which is running-OS-relative (splits on `path.sep`) and
+ * is for *this machine's* filesystem paths. Do NOT use `toPosixPath` for
+ * target-platform projection — on a Linux runner it would not convert a
+ * Windows-target path's backslashes.
+ */
+export function posixNormalize(p: string): string {
+  return p.replace(/\\/g, '/');
+}
+
+/**
  * Return true when a managed hook command must be prefixed with PowerShell's
  * call operator so a quoted executable token is invokable by the target
  * runtime/shell combination.
  *
- * Current evidence-backed policy:
- * - Gemini on Windows requires `& ` for quoted node/bash runners.
- * - Claude Code on Windows does NOT: its hook commands execute under bash/Git
- *   Bash and `& ` breaks there (#3413).
+ * The `&`/no-`&` decision is keyed on the **effective hook-execution shell**
+ * (`opts.hookShell`), not on runtime alone — a single runtime (Claude Code)
+ * can host either Git Bash or PowerShell on Windows, and no single static
+ * command string is valid in both (#2236):
+ * - Git Bash: `"node.exe" "hook.js"` works; `& "node.exe" …` → syntax error.
+ * - PowerShell: `& "node.exe" "hook.js"` works; bare `"node.exe" …` →
+ *   `Unexpected token`.
  *
- * Keep the policy conservative until another runtime has a verified need.
+ * Default is `false` (Git Bash form) for backward compatibility. Set
+ * `opts.hookShell = 'powershell'` to emit the PowerShell call-operator form.
  */
-export function hookCommandNeedsPowerShellCallOperator(opts: { platform?: string; runtime?: string } = {}): boolean {
-  const platform = opts.platform || process.platform;
-  const runtime = opts.runtime || 'generic';
-  return platform === 'win32' && runtime === 'gemini';
+export function hookCommandNeedsPowerShellCallOperator(opts: { platform?: string; runtime?: string; hookShell?: string } = {}): boolean {
+  return opts.hookShell === 'powershell';
 }
 
 /**
  * Project a fully-assembled hook command string for the target runtime.
  */
-export function formatHookCommandForRuntime(command: string, opts: { platform?: string; runtime?: string } = {}): string {
+export function formatHookCommandForRuntime(command: string, opts: { platform?: string; runtime?: string; hookShell?: string } = {}): string {
   return hookCommandNeedsPowerShellCallOperator(opts) ? `& ${command}` : command;
 }
 
@@ -91,19 +130,27 @@ export function buildLocalShellHookCommand({ localPrefix, hookFile, bashRunner, 
 export function formatManagedHookScriptToken(scriptPath: string, opts: { platform?: string } = {}): string | null {
   const platform = opts.platform || process.platform;
   if (platform !== 'win32') return null;
-  return JSON.stringify(scriptPath.replace(/\\/g, '/'));
+  return JSON.stringify(posixNormalize(scriptPath));
 }
 
-export function projectLocalHookPrefix({ runtime = 'claude', dirName }: { runtime?: string; dirName?: string | null }): string | undefined | null {
+export function projectLocalHookPrefix({ runtime: _runtime = 'claude', dirName, hookPathStyle }: { runtime?: string; dirName?: string | null; hookPathStyle?: string | null }): string | undefined | null {
   if (!dirName) return dirName;
-  return (runtime === 'gemini' || runtime === 'antigravity')
+  // Descriptor-driven (ADR-1239 / #2096): folded from a hardcoded
+  // `runtime === 'antigravity'` literal into the runtime's declared
+  // `hostBehaviors.hookPathStyle`. Runtimes that always run project hooks
+  // with the project dir as cwd (Antigravity today) declare 'raw' and get
+  // the bare dirName; every other runtime keeps the $CLAUDE_PROJECT_DIR-
+  // anchored prefix. `runtime` itself is now unused here but stays in the
+  // signature for call-site/back-compat parity (kept `_`-prefixed to
+  // satisfy no-unused-vars).
+  return (hookPathStyle === 'raw')
     ? dirName
     : `"$CLAUDE_PROJECT_DIR"/${dirName}`;
 }
 
 export function projectPortableHookBaseDir({ configDir, homeDir }: { configDir?: string | null; homeDir?: string | null }): string {
-  const normalizedConfigDir = String(configDir || '').replace(/\\/g, '/');
-  const normalizedHome = String(homeDir || '').replace(/\\/g, '/');
+  const normalizedConfigDir = posixNormalize(String(configDir || ''));
+  const normalizedHome = posixNormalize(String(homeDir || ''));
   if (!normalizedConfigDir || !normalizedHome) return normalizedConfigDir;
   return normalizedConfigDir.startsWith(normalizedHome)
     ? '$HOME' + normalizedConfigDir.slice(normalizedHome.length)
@@ -115,31 +162,35 @@ export function projectShellCommandText({
   argTokens = [],
   runtime = 'generic',
   platform = process.platform,
+  hookShell,
 }: {
   runnerToken?: string | null;
   argTokens?: (string | null | undefined)[];
   runtime?: string;
   platform?: string;
+  hookShell?: string;
 }): string | null {
   if (!runnerToken) return null;
   const parts = [runnerToken, ...argTokens.filter(Boolean)] as string[];
-  return formatHookCommandForRuntime(parts.join(' '), { platform, runtime });
+  return formatHookCommandForRuntime(parts.join(' '), { platform, runtime, hookShell });
 }
 
-export function projectManagedHookCommand({ absoluteRunner, scriptPath, runtime = 'generic', platform = process.platform }: {
+export function projectManagedHookCommand({ absoluteRunner, scriptPath, runtime = 'generic', platform = process.platform, hookShell }: {
   absoluteRunner?: string | null;
   scriptPath?: string | null;
   runtime?: string;
   platform?: string;
+  hookShell?: string;
 }): string | null {
   if (!absoluteRunner || !scriptPath) return null;
-  const normalizedScriptPath = platform === 'win32' ? scriptPath.replace(/\\/g, '/') : scriptPath;
+  const normalizedScriptPath = platform === 'win32' ? posixNormalize(scriptPath) : scriptPath;
   return projectShellCommandText({
     runnerToken: absoluteRunner,
     argTokens: [JSON.stringify(normalizedScriptPath)],
     runtime,
     platform,
-  });
+    hookShell,
+});
 }
 
 const MANAGED_HOOK_BASENAMES_BY_SURFACE: Record<string, Set<string>> = {
@@ -233,15 +284,15 @@ export function isManagedHookCommand(commandText: unknown, opts: { surface?: str
   if (Array.isArray(opts.args) && opts.args.length > 0) {
     for (const arg of opts.args) {
       if (typeof arg !== 'string') continue;
-      const argBasename = arg.replace(/\\/g, '/').split('/').pop() || '';
+      const argBasename = posixNormalize(arg).split('/').pop() || '';
       if (isManagedHookBasename(argBasename, { surface })) return true;
     }
   }
 
-  const normalizedCommand = commandText.replace(/\\/g, '/');
+  const normalizedCommand = posixNormalize(commandText);
 
   if (typeof opts.configDir === 'string' && opts.configDir.length > 0) {
-    const normalizedHooksDir = `${path.join(opts.configDir, 'hooks').replace(/\\/g, '/')}/`;
+    const normalizedHooksDir = `${posixNormalize(path.join(opts.configDir, 'hooks'))}/`;
     if (!normalizedCommand.includes(normalizedHooksDir)) return false;
   }
 
@@ -283,7 +334,7 @@ export function projectLegacySettingsHookCommand({
   platform?: string;
 }): string | null {
   if (!absoluteRunner || !scriptPath) return null;
-  const normalizedScriptPath = platform === 'win32' ? scriptPath.replace(/\\/g, '/') : scriptPath;
+  const normalizedScriptPath = platform === 'win32' ? posixNormalize(scriptPath) : scriptPath;
   // #1693: a script path already carrying a `"$CLAUDE_PROJECT_DIR"`-anchored
   // quoted prefix (local installs) is already a valid shell token — only the
   // variable is quoted, the rest is bare. JSON.stringify-ing it on Windows
@@ -366,7 +417,7 @@ export function projectPathActionProjection({
   let shellActions: ShellAction[];
   if (isWin32) {
     const psTargetDir = escapePowerShellSingleQuoted(targetDir);
-    const bashTargetDir = escapeSingleQuotedShellLiteral(String(targetDir).replace(/\\/g, '/'));
+    const bashTargetDir = escapeSingleQuotedShellLiteral(posixNormalize(String(targetDir)));
     shellActions = [
       {
         label: 'PowerShell',
@@ -506,6 +557,143 @@ export function execTool(program: string, args: string[], opts: { cwd?: string; 
   return _spawnResult(result, program);
 }
 
+/**
+ * Result shape for {@link dispatchGsdCommand}. Modeled on the existing
+ * `{exitCode,stdout,stderr,signal,error}` seam above, but flattened to the
+ * fields callers actually need (never leaks a raw Error/signal — see
+ * `timedOut`), per the "Unbounded Subprocesses" contract (CLAUDE.md):
+ * degrade to a structured result on timeout/ENOENT, never throw.
+ */
+export interface DispatchGsdCommandResult {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  timedOut: boolean;
+}
+
+/**
+ * Resolve the absolute path to gsd-tools.cjs relative to THIS module.
+ *
+ * This file compiles to gsd-core/bin/lib/shell-command-projection.cjs — a
+ * sibling of gsd-core/bin/gsd-tools.cjs — so the relative walk-up is stable
+ * regardless of install location (global/local/dev-repo layouts all ship
+ * gsd-core/bin/ as a unit).
+ */
+export function resolveGsdToolsPath(): string {
+  return path.resolve(__dirname, '..', 'gsd-tools.cjs');
+}
+
+/**
+ * Subprocess-shim dispatch to gsd-tools.cjs (ADR-1239 #2102 Stage 2).
+ *
+ * No fully-populated in-process command-routing hub exists anywhere in the
+ * tree — every `createHub()` caller (cjs-command-router-adapter.cts,
+ * phase-command-router.cts, command-routing-hub.cts's own tests) builds a
+ * single-family hub for its own narrow purpose. The ONLY dispatch path that
+ * covers the FULL family/subcommand surface is the gsd-tools.cjs CLI itself.
+ * This mirrors the SUBPROCESS-REUSE precedent already established for the
+ * OpenCode/Kilo hook bridge (see .opencode/plugins/gsd-core.js header:
+ * "Architecture: SUBPROCESS REUSE ... spawns existing hook scripts as child
+ * processes") — the same pattern, applied to command dispatch instead of
+ * hook dispatch.
+ *
+ * Output-flag choice (verified by direct invocation — see #2102 dispatch
+ * notes for the sample invocations): always pass `--raw` (undecorated,
+ * programmatically-consumable stdout on success) and `--json-errors` (a
+ * structured `{ok:false,reason,message}` JSON object on stderr, with a
+ * non-zero exit, instead of a free-text "Error: ..." line). Both are global
+ * flags accepted by every gsd-tools.cjs family/subcommand, so passing them
+ * unconditionally is safe for the full command surface.
+ *
+ * `family` maps 1:1 onto gsd-tools.cjs's first positional argv token;
+ * `subcommand` (when present) onto the second — e.g.
+ * `{family:'phase', subcommand:'add'}` → `gsd-tools.cjs phase add`. An empty
+ * `subcommand` is omitted entirely (some families, e.g. `config-path`, take
+ * no subcommand).
+ *
+ * NEVER throws. Degrades to `{ ok:false, ... }` on:
+ *   - a missing/invalid "family" (validated locally, no subprocess spawned)
+ *   - ENOENT / a missing gsd-tools.cjs (via the injectable `gsdToolsPath`)
+ *   - a wall-clock timeout (`timedOut:true`, mirroring the
+ *     `signal === 'SIGTERM' && error.code === 'ETIMEDOUT'` idiom already used
+ *     by worktree-safety.cts)
+ *   - any other unanticipated throw from the underlying spawn (defensive
+ *     try/catch — execTool itself is spawnSync-based and does not throw).
+ */
+export function dispatchGsdCommand({
+  family,
+  subcommand,
+  args = [],
+  cwd,
+  timeout = 30_000,
+  gsdToolsPath,
+}: {
+  family?: string;
+  subcommand?: string;
+  args?: string[];
+  cwd?: string;
+  timeout?: number;
+  gsdToolsPath?: string;
+} = {}): DispatchGsdCommandResult {
+  if (typeof family !== 'string' || family.length === 0) {
+    return {
+      ok: false,
+      stdout: '',
+      stderr: 'dispatchGsdCommand requires a non-empty string "family".',
+      code: null,
+      timedOut: false,
+    };
+  }
+
+  const resolvedCwd = cwd || process.cwd();
+  const toolsPath = gsdToolsPath || resolveGsdToolsPath();
+  const argv = [
+    toolsPath,
+    family,
+    ...(subcommand ? [subcommand] : []),
+    ...(Array.isArray(args) ? args : []),
+    '--cwd', resolvedCwd,
+    '--raw',
+    '--json-errors',
+  ];
+
+  let result: SpawnResultOutput;
+  try {
+    result = execTool(process.execPath, argv, { cwd: resolvedCwd, timeout });
+  } catch (e) {
+    // Defensive belt-and-suspenders: execTool is spawnSync-based and does not
+    // throw today, but a degraded result here keeps this seam's no-throw
+    // contract true even under an unanticipated future failure mode.
+    return {
+      ok: false,
+      stdout: '',
+      stderr: e instanceof Error ? e.message : String(e),
+      code: null,
+      timedOut: false,
+    };
+  }
+
+  // Mirrors the established `result.error && (result.error as
+  // NodeJS.ErrnoException).code === ...` idiom (graphify.cts, worktree-safety.cts):
+  // narrow away null via `!== null` FIRST, then cast — asserting `Error | null`
+  // to `NodeJS.ErrnoException | null` directly (paired with optional chaining)
+  // trips a typescript-eslint no-unnecessary-type-assertion false positive for
+  // this exact narrowing shape (all of ErrnoException's extra fields over Error
+  // are optional).
+  const timedOut = result.signal === 'SIGTERM'
+    && result.error !== null
+    && (result.error as NodeJS.ErrnoException).code === 'ETIMEDOUT';
+
+  return {
+    ok: result.exitCode === 0 && !timedOut,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    code: result.exitCode,
+    timedOut,
+  };
+}
+
 export function probeTty(opts: { platform?: string } = {}): string | null {
   const platform = opts.platform ?? process.platform;
   if (platform === 'win32') return null;
@@ -615,6 +803,21 @@ function atomicRenameWithRetry(tmpPath: string, filePath: string): NodeJS.ErrnoE
     }
   }
   return renameErr;
+}
+
+/**
+ * Drop-in replacement for `fs.renameSync(from, to)` that retries the transient
+ * Windows lock errnos (EPERM/EBUSY/EACCES — see DEFECT.WINDOWS-FS-OPS) a bounded
+ * number of times with a short backoff before rethrowing the final error.
+ *
+ * Idempotent on POSIX (the transient errnos do not occur), so callers retain
+ * identical semantics on macOS/Linux while gaining resilience on Windows where
+ * an antivirus scanner, indexer, or concurrent reader may briefly hold the
+ * target open. Enforced by local/require-fs-op-fallback (ADR-1703 Phase 6).
+ */
+export function retryRenameSync(fromPath: string, toPath: string): void {
+  const err = atomicRenameWithRetry(fromPath, toPath);
+  if (err !== null) throw err;
 }
 
 export function platformWriteSync(filePath: string, content: string, opts: { encoding?: BufferEncoding } = {}): void {

@@ -61,6 +61,15 @@ See **[CONTRIBUTING.md — "Proposing an ADR or PRD"](../../CONTRIBUTING.md#prop
 | [1411-resolution-provenance.md](1411-resolution-provenance.md) | Resolution must report provenance, not fall open silently | Accepted |
 | [1508-runtime-artifact-conversion-module.md](1508-runtime-artifact-conversion-module.md) | Runtime Artifact Conversion Module owns per-runtime content rewriting | Accepted |
 | [1593-skill-mapping-converter-methodology.md](1593-skill-mapping-converter-methodology.md) | Skill mapping & converter methodology across runtimes | Accepted |
+| [1769-state-md-transition-module.md](1769-state-md-transition-module.md) | STATE.md Transition Module — intent-based transitions over scattered RMW callbacks | Proposed |
+| [1817-state-md-rebuild-derivability-contract.md](1817-state-md-rebuild-derivability-contract.md) | STATE.md rebuild — derivability contract (capstone 11th transition) | Accepted |
+| [2008-command-exit-zero-gate.md](2008-command-exit-zero-gate.md) | Generic gate-predicate evaluator with a `command-exit-zero` kind (#2008) | Accepted |
+| [1990-existing-code-onboarding.md](1990-existing-code-onboarding.md) | Existing Code Onboarding Module owns deterministic repo-state detection and onboarding route selection | Proposed |
+| [2121-phase-identifier-parsing-consolidation.md](2121-phase-identifier-parsing-consolidation.md) | Phase-identifier parsing consolidation — single canonical owner (phase-id.cts) + anti-divergence guard | Accepted |
+| [2143-markdown-table-and-mutation-consolidation.md](2143-markdown-table-and-mutation-consolidation.md) | Markdown table model, bounded mutation, and fail-loud consolidation (#1372 part 2) | Accepted |
+| [2164-statusline-scope-boundary.md](2164-statusline-scope-boundary.md) | Statusline draws its data boundary at local, read-only sources (no external/credentialed data) | Accepted |
+| [612-bracket-phase-id-convention.md](612-bracket-phase-id-convention.md) | Bracket phase-ID convention — lift the milestone into a `[PROJECT.MM]` prefix; terminal deprecation of M-NN | Proposed |
+| [2264-golden-parity-redesign.md](2264-golden-parity-redesign.md) | Redesign golden-install-parity: single-source manifest builder + split invariant | Proposed |
 
 ## Seam map
 

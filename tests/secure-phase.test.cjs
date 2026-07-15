@@ -57,15 +57,18 @@ describe('SECURE: gsd-security-auditor agent', () => {
     );
   });
 
-  test('tools include Read, Write, Bash, Glob, Grep', () => {
+  test('tools include Read, Bash, Glob, Grep but NOT Write or Edit (#2119)', () => {
     const content = fs.readFileSync(agentPath, 'utf-8');
-    const requiredTools = ['Read', 'Write', 'Bash', 'Glob', 'Grep'];
+    const requiredTools = ['Read', 'Bash', 'Glob', 'Grep'];
     for (const tool of requiredTools) {
       assert.ok(
         content.includes(`- ${tool}`),
         `tools must include ${tool}`
       );
     }
+    // #2119: auditor is return-only — orchestrator is the sole SECURITY.md writer
+    assert.ok(!content.includes('- Write'), 'tools must NOT include Write (#2119)');
+    assert.ok(!content.includes('- Edit'), 'tools must NOT include Edit (#2119)');
   });
 
   test('has <role> section', () => {
@@ -380,7 +383,7 @@ describe('SECURE: VALIDATION.md security columns', () => {
   test('both columns appear in the Per-Task Verification Map table', () => {
     const content = fs.readFileSync(valPath, 'utf-8');
     // Find the table header row containing both columns
-    const lines = content.split('\n');
+    const lines = content.split(/\r?\n/);
     const headerLine = lines.find(
       line => line.includes('Threat Ref') && line.includes('Secure Behavior')
     );
@@ -516,7 +519,7 @@ describe('SECURE: per-threat severity gate (#1626)', () => {
     // The old unconditional language said "phase must not ship" without a severity qualifier.
     // After the fix, every "phase must not ship" must be paired with a severity condition.
     // Find all occurrences of "must not ship" and verify none appear without "severity" nearby.
-    const lines = content.split('\n');
+    const lines = content.split(/\r?\n/);
     for (const line of lines) {
       if (line.includes('must not ship') && !line.includes('severity')) {
         assert.fail(
@@ -706,3 +709,71 @@ describe('SECURE: security config variables resolved before use (#1625)', () => 
     );
   });
 });
+
+
+// ────────────────────────────────────────────────────────────────────────
+// Folded from tests/bug-3120-secure-phase-empty-register.test.cjs — consolidation epic #1969 (B4 #1973)
+// ────────────────────────────────────────────────────────────────────────
+{
+  const { describe: __foldDescribe } = require('node:test');
+  __foldDescribe("folded:bug-3120-secure-phase-empty-register (consolidation epic #1969 B4 #1973)", () => {
+'use strict';
+// allow-test-rule: reads product workflow markdown (secure-phase.md) to verify structural guard contract — not a source-grep test (see #3120)
+
+// Regression guard for bug #3120.
+//
+// secure-phase.md Step 3 short-circuited to Step 6 (write SECURITY.md)
+// whenever threats_open: 0, without distinguishing between:
+//   Case A: All plan-time threat_model threats are CLOSED (legitimate skip)
+//   Case B: No threat_model blocks were written at plan time (legacy phases)
+//          → rubber-stamps a clean SECURITY.md with zero audit performed
+//
+// Fix: Step 2c tracks `register_authored_at_plan_time` (true iff ≥1 PLAN
+// file contained a parseable <threat_model> block). Step 3 now requires BOTH
+// threats_open: 0 AND register_authored_at_plan_time to skip. If only
+// threats_open: 0 and NOT register_authored_at_plan_time, Step 5 runs in
+// retroactive-STRIDE mode.
+
+const { test, describe } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const ROOT = path.join(__dirname, '..');
+const src = fs.readFileSync(
+  path.join(ROOT, 'gsd-core', 'workflows', 'secure-phase.md'),
+  'utf8',
+);
+
+describe('bug #3120: secure-phase short-circuit guards', () => {
+  test('Step 2c tracks register_authored_at_plan_time', () => {
+    assert.ok(
+      src.includes('register_authored_at_plan_time'),
+      'secure-phase.md does not track register_authored_at_plan_time in Step 2c',
+    );
+  });
+
+  test('Step 3 short-circuit requires both conditions', () => {
+    assert.ok(
+      src.includes('threats_open: 0 AND register_authored_at_plan_time'),
+      'Step 3 short-circuit does not gate on both threats_open:0 AND register_authored_at_plan_time',
+    );
+  });
+
+  test('retroactive-STRIDE mode is documented for legacy phases', () => {
+    assert.ok(
+      src.includes('retroactive') || src.includes('Retroactive'),
+      'secure-phase.md does not document retroactive-STRIDE mode for legacy phases (no <threat_model> blocks)',
+    );
+  });
+
+  test('Step 5 auditor constraint varies by mode', () => {
+    assert.ok(
+      (src.includes('Verify mitigations') || src.includes('verify mitigations')) &&
+      (src.includes('Retroactive') || src.includes('retroactive')),
+      'Step 5 does not distinguish planned vs retroactive-STRIDE auditor constraint',
+    );
+  });
+});
+  });
+}

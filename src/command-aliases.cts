@@ -171,6 +171,14 @@ export const STATE_COMMAND_ALIASES: CommandAlias[] = [
     "mutation": true
   },
   {
+    "canonical": "state.rebuild",
+    "aliases": [
+      "state rebuild"
+    ],
+    "subcommand": "rebuild",
+    "mutation": true
+  },
+  {
     "canonical": "state.milestone-switch",
     "aliases": [
       "state milestone-switch"
@@ -286,6 +294,14 @@ export const INIT_COMMAND_ALIASES: CommandAlias[] = [
       "init new-milestone"
     ],
     "subcommand": "new-milestone",
+    "mutation": false
+  },
+  {
+    "canonical": "init.onboard",
+    "aliases": [
+      "init onboard"
+    ],
+    "subcommand": "onboard",
     "mutation": false
   },
   {
